@@ -1,0 +1,15 @@
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+.DS_Store
+*_cache/
+_cache/
+.Rcheck/
+*.utf8.md
+*.knit.md
+*.nb.html
+.quarto/
+_site/
+_book/

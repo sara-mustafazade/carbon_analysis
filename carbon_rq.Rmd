@@ -1,0 +1,218 @@
+---
+title: "carbon_RQ"
+output: html_notebook
+---
+
+# Analysis per Research Question
+
+## RQ1
+
+```{r}
+library(fixest); library(dplyr)
+
+analysis_sample <- analysis_sample %>%
+  mutate(
+    cpi10   = carbon_pricing_index/10,             # per +10 CPI pts
+    t       = year,                                 # trend index if needed
+    lgdppc_c= scale(log_gdp_pc, scale = FALSE),
+    ind_c   = scale(industry_share, scale = FALSE),
+    ren_c   = scale(renewable_share, scale = FALSE)
+  )
+
+# Baseline TWFE (2-way clustered)
+m1 <- feols(log_co2 ~ cpi10 + lgdppc_c + ind_c + ren_c | country + year,
+            cluster = ~ country + year, data = analysis_sample)
+
+# Driscoll–Kraay SEs
+m2 <- feols(log_co2 ~ cpi10 + lgdppc_c + ind_c + ren_c | country + year,
+            data = analysis_sample, panel.id = ~ country + year,
+            vcov = vcov_DK(~ year, lag = 3))
+
+etable(m1, m2, se.below = TRUE, headers = c("TWFE 2w-cluster","TWFE DK"))
+
+```
+```{r}
+sun_df <- analysis_sample %>%
+  group_by(country) %>%
+  mutate(adopt_year = ifelse(any(carbon_pricing_index>0, na.rm=TRUE),
+                             min(year[carbon_pricing_index>0], na.rm=TRUE), 0L)) %>%
+  ungroup()
+
+m_sun <- feols(log_co2 ~ log_gdp_pc + industry_share + renewable_share +
+                 sunab(adopt_year, year) | country + year,
+               data = sun_df, cluster = ~ country + year)
+
+iplot(m_sun, ref.line = 0, main = "Event Study: First CPI>0")
+
+```
+
+## RQ2 (Heterogeneity by carbon intensity / renewables)
+
+```{r}
+library(dplyr)
+library(fixest)
+
+# --- 0) Ensure panel keys exist and are unique --------------------------------
+if (!"country" %in% names(merged_final) && "iso3" %in% names(merged_final)) {
+  merged_final <- dplyr::rename(merged_final, country = iso3)
+}
+stopifnot(!anyDuplicated(merged_final[c("country","year")]))
+
+# --- 1) Renewables: normalize column, add lag (we will use the lag in regressions)
+# If you have renewable_share_pc (0-100), convert to fraction; otherwise keep renewable_share as-is
+merged_final <- merged_final %>%
+  mutate(
+    renewable_share = dplyr::case_when(
+      !is.na(renewable_share) ~ renewable_share,
+      !is.na(renewable_share_pc) ~ renewable_share_pc / 100,
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  group_by(country) %>%
+  arrange(year, .by_group = TRUE) %>%
+  mutate(renewable_share_l1 = lag(renewable_share, 1)) %>%
+  ungroup()
+
+# --- 2) Build analysis sample (renewables start ~2004; CO2 available to 2023) ---
+analysis_sample <- merged_final %>%
+  filter(year >= 2004, year <= 2023) %>%
+  mutate(
+    cpi10    = carbon_pricing_index / 10,         # effect per +10 CPI points
+    lgdppc_c = scale(log_gdp_pc, scale = FALSE),  # mean-centered controls
+    ind_c    = scale(industry_share, scale = FALSE),
+    ren_c    = scale(renewable_share, scale = FALSE),
+    ren_c_l1 = scale(renewable_share_l1, scale = FALSE),
+    t        = year
+  ) %>%
+  tidyr::drop_na(log_co2, cpi10, lgdppc_c, ind_c, ren_c_l1)  # use lagged renewables to reduce endog.
+
+stopifnot(!anyDuplicated(analysis_sample[c("country","year")]))
+
+# --- 3) TWFE models ------------------------------------------------------------
+# 3a) Baseline (two-way clustered)
+m1 <- feols(
+  log_co2 ~ cpi10 + lgdppc_c + ind_c + ren_c_l1 | country + year,
+  cluster = ~ country + year,
+  data = analysis_sample
+)
+
+# 3b) Driscoll–Kraay (needs panel.id + DK time index)
+m2 <- feols(
+  log_co2 ~ cpi10 + lgdppc_c + ind_c + ren_c_l1 | country + year,
+  data     = analysis_sample,
+  panel.id = ~ country + year,
+  vcov     = vcov_DK(~ year, lag = 3)
+)
+
+# 3c) Country-specific linear trends (robustness)
+m3 <- feols(
+  log_co2 ~ cpi10 + lgdppc_c + ind_c + ren_c_l1 | country[t] + year,
+  cluster  = ~ country + year,
+  data     = analysis_sample
+)
+
+# 3d) Dynamics: CPI lags 0–2 with DK SEs
+m4 <- feols(
+  log_co2 ~ l(cpi10, 0:2) + lgdppc_c + ind_c + ren_c_l1 | country + year,
+  data     = analysis_sample,
+  panel.id = ~ country + year,
+  vcov     = vcov_DK(~ year, lag = 3)
+)
+
+etable(m1, m2, m3, m4, se.below = TRUE,
+       headers = c("TWFE 2w-cluster","TWFE DK","TWFE+trends","TWFE+lags"))
+
+# Cumulative CPI effect over 0–2 years (robust to naming quirks)
+lag_names <- grep("^l\\(cpi10,\\d\\)$", names(coef(m4)), value = TRUE)
+b <- coef(m4)[lag_names]; V <- vcov(m4)[lag_names, lag_names, drop = FALSE]
+cum_est <- sum(b); cum_se <- sqrt(t(rep(1, length(b))) %*% V %*% rep(1, length(b)))
+cum_z <- as.numeric(cum_est / cum_se); cum_p <- 2 * pnorm(-abs(cum_z))
+c(cum_est = cum_est, se = cum_se, z = cum_z, p = cum_p)
+
+```
+
+## RQ3 Dynamics Lags
+
+```{r}
+m_dyn <- feols(log_co2 ~ l(cpi10,0:2) + lgdppc_c + ind_c + ren_c | country + year,
+               data = analysis_sample, panel.id = ~ country + year,
+               vcov = vcov_DK(~ year, lag = 3))
+
+# Cumulative CPI effect over 0–2 years (robust to naming issues)
+lag_names <- grep("^l\\(cpi10,\\d\\)$", names(coef(m_dyn)), value = TRUE)
+b <- coef(m_dyn)[lag_names]; V <- vcov(m_dyn)[lag_names, lag_names]
+est <- sum(b); se <- sqrt(matrix(1,1,3) %*% V %*% matrix(1,3,1)); z <- est/se; p <- 2*pnorm(-abs(z))
+c(cum_est = est, se = se, z = z, p = p)
+
+```
+
+```{r}
+# Baseline intensity pre-2004
+base_int <- merged_final %>%
+  filter(year >= 2000, year <= 2003) %>%
+  mutate(intensity = co2 / gdp) %>%
+  group_by(country) %>%
+  summarise(base_int = median(intensity, na.rm = TRUE), .groups = "drop")
+
+analysis_sample <- analysis_sample %>%
+  left_join(base_int, by = "country") %>%
+  mutate(base_int_c = scale(base_int, scale = FALSE))
+
+m_het_intensity <- feols(
+  log_co2 ~ cpi10*base_int_c + lgdppc_c + ind_c + ren_c_l1 | country + year,
+  cluster = ~ country + year, data = analysis_sample
+)
+etable(m_het_intensity, se.below = TRUE)
+
+```
+
+## RQ 4 5
+
+```{r}
+# Lag EPS to reduce simultaneity
+analysis_sample <- analysis_sample %>%
+  group_by(country) %>% arrange(year, .by_group = TRUE) %>%
+  mutate(eps_l1 = lag(oecd_value, 1)) %>%
+  ungroup() %>%
+  mutate(eps_c = scale(eps_l1, scale = FALSE))
+
+m_eps <- feols(
+  log_co2 ~ cpi10*eps_c + lgdppc_c + ind_c + ren_c_l1 | country + year,
+  cluster = ~ country + year, data = analysis_sample
+)
+
+# ETS phases (interactions only; main effects collinear with year FE)
+analysis_sample <- analysis_sample %>%
+  mutate(phaseII  = (year>=2008 & year<=2012),
+         phaseIII = (year>=2013 & year<=2020),
+         phaseIV  = (year>=2021 & year<=2023))
+
+m_phase <- feols(
+  log_co2 ~ cpi10:phaseII + cpi10:phaseIII + cpi10:phaseIV +
+            lgdppc_c + ind_c + ren_c_l1 | country + year,
+  cluster = ~ country + year, data = analysis_sample
+)
+# Is Phase IV stronger than earlier phases?
+wald(m_phase, "cpi10:phaseIV = cpi10:phaseIII")
+wald(m_phase, "cpi10:phaseIV = cpi10:phaseII")
+
+```
+
+## RQ 5
+
+```{r}
+analysis_sample <- analysis_sample %>%
+  mutate(phaseII  = (year>=2008 & year<=2012),
+         phaseIII = (year>=2013 & year<=2020),
+         phaseIV  = (year>=2021 & year<=2023))
+
+m_phase <- feols(
+  log_co2 ~ cpi10:phaseII + cpi10:phaseIII + cpi10:phaseIV +
+            lgdppc_c + ind_c + ren_c_l1 | country + year,
+  cluster = ~ country + year, data = analysis_sample
+)
+wald(m_phase, "cpi10:phaseIV = cpi10:phaseIII")
+wald(m_phase, "cpi10:phaseIV = cpi10:phaseII")
+
+```
+
