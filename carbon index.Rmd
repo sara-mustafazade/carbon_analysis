@@ -510,6 +510,8 @@ m_int_phase <- feols(log_co2 ~ cpi10:phaseII + cpi10:phaseIII + cpi10:phaseIV +
 
 
 ```
+
+
 ```{r}
 # using your merged_final / analysis_sample from earlier
 m_RQ4_ren <- feols(
@@ -522,4 +524,4 @@ q <- quantile(analysis_sample$ren_c_l1, c(.25,.5,.75), na.rm=TRUE)
 sapply(q, function(qq) coef(m_RQ4_ren)["cpi10"] + qq*coef(m_RQ4_ren)["cpi10:ren_c_l1"])
 
 ```
-
+cheng3wsssss
