@@ -19,12 +19,14 @@ library(readxl)
 library(dplyr)
 library(ggplot2)
 library(tidyr)
+library(stringr)
 library(readr)
 # to pull variables
 library(eurostat)
 library(countrycode)
 library(WDI)
-# for regression
+# for regression b  
+
 library(fixest)
 library(broom)
 
@@ -41,7 +43,7 @@ head(df)
 head(oecd)
 ```
 
-Filetiring EU countries from our dataset
+Filtering EU countries from our dataset
 ```{r}
 
 # vector of EU countries
@@ -151,7 +153,7 @@ cpi_long <- df_eu %>%
   
   # The 'year' column will look like "carbon_pricing_index_2000".
   # We need to remove the prefix to get just the year.
-  mutate(year = str_remove(year, "carbon_pricing_index_"))
+ dplyr::mutate(year = str_remove(year, "carbon_pricing_index_"))
 
 
 # ==============================================================================
