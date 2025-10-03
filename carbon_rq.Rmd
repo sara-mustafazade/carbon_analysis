@@ -346,7 +346,22 @@ etable(lapply(0:3, run_lp), headers = paste0("h=",0:3), se.below=TRUE)
 ```{r}
 pkgbuild::has_build_tools(debug = TRUE)
 
+# Change the download method
+options(download.file.method = "libcurl")
 
+# Try installing again
+remotes::install_github("lrberge/fixest")
+
+install.packages("C:/Users/sara/Downloads/lrberge-fixest-v0.13.2-7-g7e79024.tar.gz", repos = NULL, type = "source")
+```
+```{r}
+# To install from CRAN:
+install.packages("fixest")
+
+# To install the latest stable development release:
+install.packages("fixest", 
+                 repos = c(ropensci = 'https://fastverse.r-universe.dev',
+                           CRAN = 'https://cloud.r-project.org'))
 ```
 
 
