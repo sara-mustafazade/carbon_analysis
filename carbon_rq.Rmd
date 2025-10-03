@@ -8,7 +8,7 @@ output: html_notebook
 ## RQ1
 
 ```{r}
-library(fixest); library(dplyr)
+
 
 analysis_sample <- analysis_sample %>%
   mutate(
@@ -209,17 +209,143 @@ m1 <- feols(log_co2_pc ~ lcpi + ren_c + lgdppc_c + ind_c | iso3 + year,
             cluster=~iso3, data=analysis_sample)
 
 # With country-specific linear trends (absorbs slow paths)
-m1_tr <- feols(log_co2_pc ~ lcpi + ren_c + lgdppc_c + ind_c | iso3[trend] + year,
-               cluster=~iso3, data=analysis_sample)
-
-m1_tr_i <- feols(
-  log_co2_pc ~ lcpi + ren_c + lgdppc_c + ind_c + i(iso3, t) | iso3 + year,
+m1_tr_i <- feols(log_co2_pc ~ lcpi + ren_c + lgdppc_c + ind_c + i(iso3, t) | iso3 + year,
   cluster = ~ iso3, data = analysis_sample
 )
 
 # Totals as robustness, controlling for size (STIRPAT-style)
 m1_tot <- feols(log_co2 ~ lcpi + log_pop + log_gdp_pc + ren_c + ind_c | iso3 + year,
                 cluster=~iso3, data=analysis_sample)
+etable(m1, m1_tr_i, m1_tot, se.below=TRUE,
+       headers=c("Per-capita","Per-capita+trends","Totals"))
+
+```
+## RQ 3 / H3 Dynamics
+```{r}
+# Main Specification: Per-capita emissions with lags
+m_main <- feols(
+  log_co2_pc ~ l(cpi10, 0:2) + lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  panel.id = ~ country + year,
+  vcov     = vcov_DK(~ year, lag = 3)
+)
+
+# Robustness Check: Total emissions with size controls and lags
+m_robust <- feols(
+  log_co2 ~ l(cpi10, 0:2) + log_pop + log_gdp_pc + ind_c + ren_c | country + year,
+  data    = analysis_sample,
+  panel.id = ~ country + year,
+  vcov     = vcov_DK(~ year, lag = 3)
+)
+
+etable(m_main, m_robust, se.below = TRUE,
+       headers = c("Per-capita (main)","Totals (robustness)"))
+```
+
+Two-way FE with Driscoll–Kraay SEs shows no contemporaneous CPI effect, but a one-year-lagged reduction of ~1.5% (per-capita) and ~2.1% (totals) per +10 €/t increase in the carbon price. The 2-year lag is small and insignificant, consistent with adjustment occurring within roughly a year. We’re stacking level lags of a highly persistent policy (CPI), so the t+1 effect shows the first round of adjustment, while t+2 gets diluted by (i) multicollinearity with newer CPI levels, (ii) front-loaded abatement, and (iii) annual measurement/budget cycles.
+
+```{r}
+# Formally testing cumulative effect over 0-2 years
+# Wald test for m_main, m_robust
+
+cum_wald <- function(mod, coefs = c("cpi10","l(cpi10, 1)","l(cpi10, 2)")) {
+  nm  <- names(coef(mod))
+  idx <- match(coefs, nm)
+  if (any(is.na(idx))) stop("Missing coefs: ", paste(coefs[is.na(idx)], collapse=", "))
+
+  b <- coef(mod)[idx]
+  V <- vcov(mod)[idx, idx, drop = FALSE]  # uses the model's DK vcov
+  L <- matrix(1, nrow = 1, ncol = length(idx))
+
+  est <- as.numeric(L %*% b)
+  se  <- sqrt(as.numeric(L %*% V %*% t(L)))
+  z   <- est / se
+  p   <- 2 * pnorm(abs(z), lower.tail = FALSE)
+  ci  <- est + c(-1, 1) * 1.96 * se
+  list(est = est, se = se, z = z, p = p, ci = ci)
+}
+
+res_main   <- cum_wald(m_main)
+res_robust <- cum_wald(m_robust)
+res_main
+res_robust
+
+```
+Two-way FE with Driscoll–Kraay SEs shows no contemporaneous CPI effect, but a cumulative two-year reduction of ≈1.0% (per-capita) and ≈1.9% (totals) for a one-time +10 €/t increase in carbon price (95% CIs [−1.90, −0.17] and [−2.82, −0.96]). The decline is concentrated at t+1.
+
+
+Checking lag collinearity:
+```{r}
+
+tmp <- analysis_sample %>%
+  arrange(country, year) %>%
+  group_by(country) %>%
+  mutate(cpi_l1 = lag(cpi10), cpi_l2 = lag(cpi10, 2)) %>%
+  ungroup()
+
+with(tmp, c(
+  cor01 = cor(cpi10, cpi_l1, use="pair"),
+  cor02 = cor(cpi10, cpi_l2, use="pair"),
+  cor12 = cor(cpi_l1, cpi_l2, use="pair")
+))
+
+```
+Problem: Multicollinearity of Lags
+The lagged values of CPI are highly correlated with each other (e.g., cor(cpi10, lag(cpi10)) ≈ 0.92).
+
+The Solution: Almon Polynomial Distributed Lags (PDL)
+The Almon lag (or PDL) model is designed specifically to solve this problem. Instead of estimating a separate coefficient for each lag, it imposes a structure, assuming the coefficients of the lags lie along a smooth polynomial curve (in your case, a 2nd-degree polynomial, which is a parabola).
+
+This approach overcomes multicollinearity by estimating the shape of the lag effect rather than each individual point, resulting in more stable and efficient estimates.
+```{r}
+
+analysis_sample$year <- as.integer(analysis_sample$year)
+
+# sanity: no duplicate country-year rows?
+any(duplicated(analysis_sample[c("country","year")]))
+
+m_l3 <- feols(
+  log_co2_pc ~ l(cpi10, 0:3) + lgdppc_c + ind_c + ren_c | country + year,
+  data      = analysis_sample,
+  panel.id  = ~ country + year,               # <-- add this
+  vcov      = vcov_DK(~ year, lag = 3)
+)
+etable(m_l3, se.below = TRUE)
+
+cum_wald(m_l3, coefs = c("cpi10","l(cpi10, 1)","l(cpi10, 2)","l(cpi10, 3)"))
+
+```
+
+
+```{r}
+#Smoothed distributed lag (Almon PDL): 
+feols(log_co2_pc ~ almon(cpi10, 0:3, 2) + lgdppc_c + ind_c + ren_c | country + year,
+      data = analysis_sample,
+      panel.id = ~ country + year, 
+      vcov = vcov_DK(~year, lag = 3))
+
+m_almon <- feols(
+  log_co2_pc ~ almon(cpi10, 0:3, 2) + lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  panel.id = ~ country + year,
+  vcov     = vcov_DK(~ year, lag = 3)
+)
+
+as_lp <- analysis_sample |>
+  dplyr::arrange(country, year) |>
+  dplyr::group_by(country) |>
+  dplyr::mutate(dcpi = cpi10 - dplyr::lag(cpi10)) |>
+  dplyr::ungroup()
+
+run_lp <- function(h) feols(flead(log_co2_pc, h) ~ dcpi + lgdppc_c + ind_c + ren_c |
+                            country + year, data = as_lp, vcov = vcov_DK(~year, lag = 3))
+etable(lapply(0:3, run_lp), headers = paste0("h=",0:3), se.below=TRUE)
+
+
+```
+```{r}
+pkgbuild::has_build_tools(debug = TRUE)
+
 
 ```
 
