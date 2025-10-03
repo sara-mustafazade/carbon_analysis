@@ -7,7 +7,7 @@ date: "2025-08-31"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-setwd("~/Library/CloudStorage/OneDrive-umontpellier.fr/Project 2/carbon_pricing")
+#setwd("~/Library/CloudStorage/OneDrive-umontpellier.fr/Project 2/carbon_pricing")
 ```
 
 ## Data loading and cleaning
@@ -32,7 +32,7 @@ library(broom)
 
 # Load the data
 # On the environmental Policy Stringency (EPS) index from OECD
-oecd <- read_csv("OECD.ECO.MAD,DSD_EPS@DF_EPS,1.0+.A..EPS.csv")
+#oecd <- read_csv("OECD.ECO.MAD,DSD_EPS@DF_EPS,1.0+.A..EPS.csv")
 
 # read the sheet called "final_sheet"
 df <- read_excel("carbon_index_2025.xlsx", sheet = "final_sheet")
@@ -56,13 +56,13 @@ eu_countries <- c(
 )
 
 # Vecteur des pays de l'UE
-pays_ue <- c(
-  "Autriche", "Belgique", "Bulgarie", "Croatie", "Chypre", "République Tchèque",
-  "Danemark", "Estonie", "Finlande", "France", "Allemagne", "Grèce", "Hongrie",
-  "Irlande", "Italie", "Lettonie", "Lituanie", "Luxembourg", "Malte",
-  "Pays-Bas", "Pologne", "Portugal", "Roumanie", "Slovaquie", "Slovénie",
-  "Espagne", "Suède"
-)
+#pays_ue <- c(
+#  "Autriche", "Belgique", "Bulgarie", "Croatie", "Chypre", "République Tchèque",
+#  "Danemark", "Estonie", "Finlande", "France", "Allemagne", "Grèce", "Hongrie",
+#  "Irlande", "Italie", "Lettonie", "Lituanie", "Luxembourg", "Malte",
+#  "Pays-Bas", "Pologne", "Portugal", "Roumanie", "Slovaquie", "Slovénie",
+#  "Espagne", "Suède"
+#)
 
 # filter only EU countries
 df_eu <- df %>% 
@@ -71,13 +71,13 @@ df_eu <- df %>%
 co2_eu <- co2 %>%
   filter(Name %in% eu_countries)
 
-oecd_eu <- oecd %>%
-  filter(oecd$`Zone de référence` %in% pays_ue)
+#oecd_eu <- oecd %>%
+#  filter(oecd$`Zone de référence` %in% pays_ue)
 
 # check
 head(df_eu)
 head(co2_eu)
-head(oecd_eu)
+#head(oecd_eu)
 
 ```
 ```{r}
@@ -127,7 +127,7 @@ co2_key <- co2_eu_long %>%
 
 co2_policy_long <- df_eu %>%
   # Select the identifier columns and the year columns for CO2
-  select(ds_country, iso3, `2000`:`2025`) %>%
+  select(ds_country, iso3, `2000`:`2023`) %>%
   
   # Pivot these year columns
   pivot_longer(
@@ -153,7 +153,8 @@ cpi_long <- df_eu %>%
   
   # The 'year' column will look like "carbon_pricing_index_2000".
   # We need to remove the prefix to get just the year.
- dplyr::mutate(year = str_remove(year, "carbon_pricing_index_"))
+ dplyr::mutate(year = str_remove(year, "carbon_pricing_index_")) %>%
+  mutate(year = as.numeric(year)) 
 
 
 # ==============================================================================
@@ -162,11 +163,10 @@ cpi_long <- df_eu %>%
 
 # We join by country and year to bring everything together.
 # We also convert 'year' to a numeric type for easier analysis.
-panel_df <- co2_long %>%
-  full_join(cpi_long, by = c("ds_country", "iso3", "year")) %>%
+panel_df <- co2_key %>%
+  full_join(cpi_long, by = c( "iso3", "year")) %>%
   mutate(year = as.numeric(year)) %>%
-  # Optional: Arrange the data for readability
-  arrange(ds_country, year)
+  arrange(iso3, ds_country, year)
 
 # --- View the result ---
 cat("Data has been successfully transformed into a long panel format:\n")
@@ -174,21 +174,13 @@ head(panel_df)
 
 # --- Prerequisite: Your panel data frame must be available ---
 # Let's assume it's called 'panel_df_filtered'
-
+#since we cut data from 2004 to 2023 later policy dummy is useless, since all countries acceept policy latest in 2005
 # Create the numeric dummy variable
-panel_df <- panel_df %>%
-  mutate(policy_dummy = ifelse(co2_policy == "Yes", 1, 0))
+#panel_df <- panel_df %>%
+#  mutate(policy_dummy = ifelse(co2_policy == "Yes", 1, 0))
 
 ```
-```{r merge long co2 and cpi}
-
-# Merge the two data frames by country (iso3) and year
-merged_df <- panel_df %>%
-  left_join(co2_key, by = c("iso3", "year"))
-
-# --- View the result to confirm ---
-cat("Data frames successfully merged:\n")
-head(merged_df)
+```{r OECD}
 
 # Leaving OECD envionrmental  policy stringency index for later since it is only for years 2016-2020 
 
@@ -267,7 +259,7 @@ head(wdi_eu)
 #############
 
 # 2) Merge with your dataset
-merged_controls <- merged_df %>%
+merged_controls <- panel_df %>%
   left_join(wdi_eu, by = c("iso3", "year"))
 
 
@@ -334,7 +326,7 @@ renewables_eu <- renewables_raw %>%
 merged_final <- merged_controls %>%
   left_join(renewables_eu, by = c("iso3", "year")) # Merging by 'iso3'
 # Safety checks
-stopifnot(!anyDuplicated(renewables_eu[c("country","year")]))
+stopifnot(!anyDuplicated(renewables_eu[c("iso3","year")]))
 
 # Optional: pad to full 2000–2025 panel
 renewables_eu <- renewables_eu %>%
@@ -408,8 +400,9 @@ What Each Transformation Does
 * **`t = year` (Time Trend):** Creating a simple numeric time trend variable is useful for models where you want to control for a linear trend in emissions that is specific to each country, which is a more flexible specification than only using year fixed effects.
 
 ```{r}
-
-skimr::skim(analysis_sample)
+# Quick data summary and save
+#skimr::skim(analysis_sample)
+#write_csv(analysis_sample, "analysis_sample.csv")
 
 # Select only the numeric variables for the correlation matrix
 numeric_vars <- analysis_sample %>%
@@ -470,6 +463,55 @@ wald(m4, "l(cpi10,0) + l(cpi10,1) + l(cpi10,2) = 0")
 
 ```
 Across TWFE specifications, a +10-point increase in CPI is associated with a –0.5% to –1.0% same-year change in emissions, not statistically distinguishable from zero. Allowing for dynamics, we find a significant –2.0% reduction one year after the CPI increase, with no further effect at two years; the cumulative 0–2-year effect is about –1.8%. Results are robust to Driscoll–Kraay standard errors, country × year fixed effects, and (to be shown) country-specific trends and alternative CPI transforms. 
+
+Looking at the per capita effect
+```{r}
+# Main spec: per-capita emissions
+feols(log_co2_pc ~ lcpi + ren_c + lgdppc_c + ind_c | iso3 + year,
+      cluster = ~ iso3, data = analysis_sample)
+
+# Robustness: totals with size controls (STIRPAT-style)
+feols(log_co2 ~ lcpi + log_pop + log_gdp_pc + ren_c + ind_c | iso3 + year,
+      cluster = ~ iso3, data = analysis_sample)
+
+# Intensity
+feols(I(log_co2 - log_gdp) ~ lcpi + ren_c + lgdppc_c + ind_c | iso3 + year,
+      cluster = ~ iso3, data = analysis_sample)
+
+```
+
+```{r}
+
+# Leads (-2,-1) + lags (0..3). Outcome can be log_co2_pc or log_co2.
+m_leadlag <- feols(
+  log_co2_pc ~ fsum(lcpi, -2:3) + ren_c + lgdppc_c + ind_c | iso3 + year,
+  cluster = ~ iso3 + year, data = analysis_sample
+)
+iplot(m_leadlag, ref.line = 0, main = "CPI: leads(<0) and lags(>0)")
+
+# Cumulative 3-year effect (adjust horizon as needed)
+wald(m_leadlag, "fsum::lcpi_-0 + fsum::lcpi_0 + fsum::lcpi_1 + fsum::lcpi_2 + fsum::lcpi_3 = 0")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ```{r}
 # Cumulative effect test 

@@ -198,21 +198,29 @@ wald(m_phase, "cpi10:phaseIV = cpi10:phaseII")
 
 ```
 
-## RQ 5
+# Analysis per Research Question
+
+## RQ1 / H1 Average causal impact
 
 ```{r}
-analysis_sample <- analysis_sample %>%
-  mutate(phaseII  = (year>=2008 & year<=2012),
-         phaseIII = (year>=2013 & year<=2020),
-         phaseIV  = (year>=2021 & year<=2023))
 
-m_phase <- feols(
-  log_co2 ~ cpi10:phaseII + cpi10:phaseIII + cpi10:phaseIV +
-            lgdppc_c + ind_c + ren_c_l1 | country + year,
-  cluster = ~ country + year, data = analysis_sample
+# Main (per-capita outcome)
+m1 <- feols(log_co2_pc ~ lcpi + ren_c + lgdppc_c + ind_c | iso3 + year,
+            cluster=~iso3, data=analysis_sample)
+
+# With country-specific linear trends (absorbs slow paths)
+m1_tr <- feols(log_co2_pc ~ lcpi + ren_c + lgdppc_c + ind_c | iso3[trend] + year,
+               cluster=~iso3, data=analysis_sample)
+
+m1_tr_i <- feols(
+  log_co2_pc ~ lcpi + ren_c + lgdppc_c + ind_c + i(iso3, t) | iso3 + year,
+  cluster = ~ iso3, data = analysis_sample
 )
-wald(m_phase, "cpi10:phaseIV = cpi10:phaseIII")
-wald(m_phase, "cpi10:phaseIV = cpi10:phaseII")
+
+# Totals as robustness, controlling for size (STIRPAT-style)
+m1_tot <- feols(log_co2 ~ lcpi + log_pop + log_gdp_pc + ren_c + ind_c | iso3 + year,
+                cluster=~iso3, data=analysis_sample)
 
 ```
+
 
