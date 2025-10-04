@@ -273,6 +273,85 @@ res_robust
 ```
 Two-way FE with Driscoll–Kraay SEs shows no contemporaneous CPI effect, but a cumulative two-year reduction of ≈1.0% (per-capita) and ≈1.9% (totals) for a one-time +10 €/t increase in carbon price (95% CIs [−1.90, −0.17] and [−2.82, −0.96]). The decline is concentrated at t+1.
 
+```{r}
+
+# --- assume you already have m_main and m_robust (with DK SEs, lags 0..2) ---
+
+# helper to compute cumulative (0–2y): cpi10 + l1 + l2
+cum_02 <- function(mod){
+  nm <- names(coef(mod))
+  want <- c("cpi10","l(cpi10, 1)","l(cpi10, 2)")
+  idx <- match(want, nm)
+  b <- coef(mod)[idx]
+  V <- vcov(mod)[idx, idx, drop = FALSE]
+  L <- matrix(1, 1, 3)
+
+  est <- as.numeric(L %*% b)
+  se  <- sqrt(as.numeric(L %*% V %*% t(L)))
+  z   <- est / se
+  p   <- 2 * pnorm(abs(z), lower.tail = FALSE)
+  stars <- ifelse(p < .001,"***", ifelse(p < .01,"**", ifelse(p < .05,"*",
+                   ifelse(p < .1,".",""))))
+  list(est=est, se=se, p=p, stars=stars)
+}
+
+r_main   <- cum_02(m_main)
+r_robust <- cum_02(m_robust)
+
+# pretty print cumulative cells, e.g., "-0.016** (0.0048)"
+fmt <- function(x) formatC(x, format="f", digits=3)
+cum_row <- data.frame(
+  term = "Cumulative CPI (0–2y)",
+  `Per-capita (main)`   = glue("{fmt(r_main$est)}{r_main$stars}\n({fmt(r_main$se)})"),
+  `Totals (robustness)` = glue("{fmt(r_robust$est)}{r_robust$stars}\n({fmt(r_robust$se)})")
+)
+
+# map coefficient names for publication
+coef_map <- c(
+  "cpi10"        = "CPI (t)",
+  "l(cpi10, 1)"  = "CPI (t−1)",
+  "l(cpi10, 2)"  = "CPI (t−2)",
+  "log_pop"      = "log(Population)",
+  "log_gdp_pc"   = "log(GDP per capita)",
+  "lgdppc_c"     = "log(GDPpc) (demeaned)",
+  "ind_c"        = "Industry share (demeaned)",
+  "ren_c"        = "Renewables share (demeaned)"
+)
+
+# which GOF rows to show and how to label them
+gof_map <- tribble(
+  ~raw,               ~clean,                 ~fmt,
+  "nobs",             "Observations",         0,
+  "r.squared",        "R^2",                  3,
+  "within.r.squared", "Within R^2",           3
+)
+
+# Add fixed effects indicators as custom rows
+fe_rows <- data.frame(
+  term = c("Country FE", "Year FE"),
+  `Per-capita (main)`   = c("Yes","Yes"),
+  `Totals (robustness)` = c("Yes","Yes")
+)
+
+# build the table
+msummary(
+  list("Per-capita (main)" = m_main, "Totals (robustness)" = m_robust),
+  coef_map  = coef_map,
+  gof_map   = gof_map,
+  add_rows  = rbind(cum_row, fe_rows),
+  statistic = "({std.error})",
+  stars     = c('*' = .05, '**' = .01, '***' = .001),
+  notes = list(
+    "Two-way fixed effects at country and year levels.",
+    "Standard errors are Driscoll–Kraay with 3 lags, clustered by year dimension.",
+    "Dependent variable is log CO₂ per-capita (col. 1) and log total CO₂ (col. 2).",
+    "CPI is scaled so that a +10 €/t price change equals +1 in cpi10.",
+    "Cumulative CPI (0–2y) equals CPI(t) + CPI(t−1) + CPI(t−2)."
+  ),
+  output = "latex"
+)
+
+```
 
 Checking lag collinearity:
 ```{r}
@@ -400,6 +479,7 @@ list(lag_table = lag_df,
 
 ```
 
+
 ```{r}
 # After running your model...
 gamma <- coef(m_pdl)[c("pdl0", "pdl1", "pdl2")]
@@ -416,4 +496,460 @@ print(beta_k)
 ```
 
 
+```{r}
+# 0) ensure clean panel keys
+analysis_sample$year <- as.integer(analysis_sample$year)
+stopifnot(!any(duplicated(analysis_sample[c("country","year")])))
+
+# 1) Build the CPI "shock": +1 in dcpi == +10 €/t increase
+as_lp <- analysis_sample %>%
+  arrange(country, year) %>%
+  group_by(country) %>%
+  mutate(dcpi = cpi10 - lag(cpi10)) %>%
+  ungroup()
+
+# 2) Local projection runner: y_{t+h} on dcpi_t with FE and DK SEs
+run_lp <- function(h) {
+  dat_h <- as_lp %>%
+    group_by(country) %>%
+    mutate(y_h = dplyr::lead(log_co2_pc, h)) %>%
+    ungroup()
+  feols(
+    y_h ~ dcpi + lgdppc_c + ind_c + ren_c | country + year,
+    data = dat_h,
+    vcov = vcov_DK(~ year, lag = 3)
+  )
+}
+
+mods <- lapply(0:3, run_lp)
+etable(mods, headers = paste0("h=", 0:3), se.below = TRUE)
+
+```
+
+1) Baseline distributed-lag table (Per-capita & Totals)
+
+This reproduces your main two specs with CPI at t, t-1, t-2, and adds a custom cumulative (t..t+2) row.
+
+```{r}
+
+# helper: cumulative effect & SE for selected coefficients
+cum_wald <- function(mod, coefs) {
+  nm  <- names(coef(mod))
+  idx <- match(coefs, nm)
+  b   <- coef(mod)[idx]
+  V   <- vcov(mod)[idx, idx, drop = FALSE]
+  L   <- matrix(1, nrow = 1, ncol = length(idx))
+  est <- as.numeric(L %*% b)
+  se  <- sqrt(as.numeric(L %*% V %*% t(L)))
+  list(est = est, se = se)
+}
+fmt_cell <- function(est, se, digits = 3) sprintf("%.3f\n(%.3f)", est, se)
+
+# coefficient labels
+cm <- c(
+  "cpi10"        = "CPI (t)  /  +10 €/t",
+  "l(cpi10, 1)"  = "CPI (t–1)",
+  "l(cpi10, 2)"  = "CPI (t–2)",
+  "log_pop"      = "log(Population)",
+  "log_gdp_pc"   = "log(GDP per capita)",
+  "lgdppc_c"     = "Δ log GDPpc (ctr.)",
+  "ind_c"        = "Δ Industry share (ctr.)",
+  "ren_c"        = "Δ Renewable share (ctr.)"
+)
+
+# build the "Cumulative CPI (t..t+2)" extra row
+row_main   <- cum_wald(m_main,   c("cpi10","l(cpi10, 1)","l(cpi10, 2)"))
+row_robust <- cum_wald(m_robust, c("cpi10","l(cpi10, 1)","l(cpi10, 2)"))
+
+add_rows_df <- tibble::tibble(
+  term = "Cumulative CPI (t..t+2)",
+  `Per-capita (main)`   = fmt_cell(row_main$est, row_main$se),
+  `Totals (robustness)` = fmt_cell(row_robust$est, row_robust$se)
+)
+
+modelsummary(
+  list("Per-capita (main)" = m_main,
+       "Totals (robustness)" = m_robust),
+  coef_map  = cm,
+  gof_omit  = "IC|Log|Adj|F$|Std|^FE",
+  statistic = "({std.error})",
+  stars     = TRUE,
+  add_rows  = add_rows_df,
+  output    = "table_cpi_lags.tex",   # change to "markdown" or "html" if you prefer
+  notes     = "Country & year FE in all columns. SE: Driscoll–Kraay with lag=3. Outcome is log points; CPI regressor is scaled so +1 = +10 €/t."
+)
+
+```
+
+Local-projections (IRF) table — one coefficient per horizon
+
+This shows the effect of ΔCPI (+10 €/t) at horizons h=0..3, keeping the other controls in the regression but only printing the ΔCPI coefficient.
+```{r}
+# 'mods' is your list: mods <- lapply(0:3, run_lp)
+modelsummary(
+  mods,
+  coef_map  = c("dcpi" = "ΔCPI (+10 €/t)"),
+  coef_omit = "^(?!dcpi$).*",  # keep only dcpi; regex needs PCRE (default)
+  gof_omit  = "IC|Log|Adj|F$|Std|^FE",
+  statistic = "({std.error})",
+  stars     = TRUE,
+  headers   = paste0("h=", 0:3),
+  output    = "table_lp_irf.tex",
+  notes     = "Local projections of y_{t+h} on ΔCPI_t (+10 €/t), with controls, country & year FE; SE: Driscoll–Kraay (lag=3)."
+)
+
+```
+
+
+3) PDL (degree-2, lags 0..3): implied lag betas & cumulatives
+
+Turns your m_pdl into a compact table of implied lag coefficients with 95% CIs, plus cumulative 0–2 and 0–3 rows.
+
+```{r}
+# rebuild implied lag betas & CIs
+a <- coef(m_pdl)[c("pdl0","pdl1","pdl2")]
+V <- vcov(m_pdl)[c("pdl0","pdl1","pdl2"), c("pdl0","pdl1","pdl2")]
+
+k <- 0:3
+b_hat <- as.numeric(a[1] + a[2]*k + a[3]*k^2)
+J <- cbind(1, k, k^2)
+se_b <- sqrt(diag(J %*% V %*% t(J)))
+lo   <- b_hat - 1.96*se_b
+hi   <- b_hat + 1.96*se_b
+
+lag_df <- tibble::tibble(
+  `Lag (years)` = paste0("t+", k),
+  `Effect`      = sprintf("%.3f", b_hat),
+  `SE`          = sprintf("(%.3f)", se_b),
+  `95% CI`      = sprintf("[%.3f, %.3f]", lo, hi)
+)
+
+# cumulatives (0–2 and 0–3) via delta method
+Sigma_b <- J %*% V %*% t(J)
+L02 <- matrix(c(1,1,1,0), 1); L03 <- matrix(c(1,1,1,1), 1)
+
+est02 <- as.numeric(L02 %*% b_hat); se02 <- sqrt(as.numeric(L02 %*% Sigma_b %*% t(L02)))
+est03 <- as.numeric(L03 %*% b_hat); se03 <- sqrt(as.numeric(L03 %*% Sigma_b %*% t(L03)))
+
+cum_df <- tibble::tibble(
+  `Lag (years)` = c("Cumulative t..t+2", "Cumulative t..t+3"),
+  `Effect`      = sprintf("%.3f", c(est02, est03)),
+  `SE`          = sprintf("(%.3f)", c(se02, se03)),
+  `95% CI`      = c(
+    sprintf("[%.3f, %.3f]", est02 - 1.96*se02, est02 + 1.96*se02),
+    sprintf("[%.3f, %.3f]", est03 - 1.96*se03, est03 + 1.96*se03)
+  )
+)
+
+# bind and export
+tbl_pdl <- dplyr::bind_rows(
+  tibble::tibble(`Lag (years)` = "Panel A: Implied lag coefficients"), lag_df,
+  tibble::tibble(`Lag (years)` = "Panel B: Cumulative effects"), cum_df
+)
+
+modelsummary::datasummary_df(
+  tbl_pdl,
+  output = "table_pdl_lags.tex",
+  notes  = "PDL degree-2 over CPI lags 0..3. +1 in CPI regressor = +10 €/t. Country & year FE; SE: Driscoll–Kraay (lag=3)."
+)
+
+```
+
+
+## RQ 5 
+Phase IV (RQ5): Are effects stronger in Phase IV?
+```{r}
+
+
+# -----------------------
+# 0) Prep: Phase IV flag
+# -----------------------
+as_ph <- analysis_sample %>%
+  mutate(phaseIV = year >= 2021)  # TRUE for 2021–2023
+
+# -----------------------
+# 1) DL with Phase-IV interactions
+# -----------------------
+m_phase <- feols(
+  log_co2_pc ~ l(cpi10, 0:2)*phaseIV + lgdppc_c + ind_c + ren_c | country + year,
+  data = as_ph, panel.id = ~ country + year, vcov = vcov_DK(~year, lag = 3)
+)
+
+# -----------------------
+# 2) Make cumulative rows (t..t+2) for baseline (pre-IV) and Phase IV = baseline + interaction
+# -----------------------
+cum_row_phase <- function(mod){
+  nm  <- names(coef(mod)); V <- vcov(mod); b <- coef(mod)
+
+  # Base terms (Phase II/III)
+  base_terms <- nm[nm %in% c("cpi10","l(cpi10, 1)","l(cpi10, 2)")]
+  # Interaction terms with Phase IV (names typically end with ':phaseIVTRUE')
+  inter_terms <- nm[grepl("^cpi10:phaseIVTRUE$|^l\\(cpi10, 1\\):phaseIVTRUE$|^l\\(cpi10, 2\\):phaseIVTRUE$", nm)]
+
+  vec_L <- function(terms){
+    L <- rep(0, length(nm)); L[match(terms, nm)] <- 1; L
+  }
+
+  # Baseline cumulative
+  L_base <- vec_L(base_terms)
+  est_b  <- sum(b[match(base_terms, nm)])
+  se_b   <- sqrt(drop(t(L_base) %*% V %*% L_base))
+
+  # Phase IV cumulative = base + interactions
+  both_terms <- c(base_terms, inter_terms)
+  L_iv <- vec_L(both_terms)
+  est_iv <- sum(b[match(both_terms, nm)])
+  se_iv  <- sqrt(drop(t(L_iv) %*% V %*% L_iv))
+
+  list(
+    baseline = sprintf("%.3f\n(%.3f)", est_b, se_b),
+    phaseIV  = sprintf("%.3f\n(%.3f)", est_iv, se_iv)
+  )
+}
+rows_phase <- cum_row_phase(m_phase)
+
+add_rows_phase <- tibble::tibble(
+  term = c("Cumulative CPI (t..t+2), pre-Phase IV",
+           "Cumulative CPI (t..t+2), Phase IV"),
+  `Phase IV (per-capita)` = c(rows_phase$baseline, rows_phase$phaseIV)
+)
+
+# -----------------------
+# 3) Publishable table
+# -----------------------
+cm_phase <- c(
+  "cpi10"                 = "CPI (t)  /  +10 €/t",
+  "l(cpi10, 1)"           = "CPI (t–1)",
+  "l(cpi10, 2)"           = "CPI (t–2)",
+  "cpi10:phaseIVTRUE"     = "× Phase IV",
+  "l(cpi10, 1):phaseIVTRUE" = "× Phase IV (t–1)",
+  "l(cpi10, 2):phaseIVTRUE" = "× Phase IV (t–2)",
+  "lgdppc_c"              = "Δ log GDPpc (ctr.)",
+  "ind_c"                 = "Δ Industry share (ctr.)",
+  "ren_c"                 = "Δ Renewable share (ctr.)"
+)
+
+modelsummary(
+  list("Phase IV (per-capita)" = m_phase),
+  coef_map  = cm_phase,
+  gof_omit  = "IC|Log|Adj|F$|Std|^FE",
+  statistic = "({std.error})",
+  stars     = TRUE,
+  add_rows  = add_rows_phase,
+  notes     = "Country & year FE. SE: Driscoll–Kraay (lag=3). +1 in CPI regressor = +10 €/t.",
+  output    = "table_phaseIV.tex"   # change to "markdown" or "html" if you prefer
+)
+
+```
+
+## RQ 2
+Heterogeneity (RQ2): High-intensity & Low-renewables countries
+
+Build pre-period groups (e.g., 2004–2006) and interact the CPI lags. Then compute subgroup-specific cumulative effects (0..2y).
+
+```{r}
+# -----------------------
+# 0) Pre-period baseline groups
+# -----------------------
+base <- analysis_sample %>%
+  filter(year %in% 2004:2006) %>%
+  group_by(country) %>%
+  summarise(
+    base_int = mean(emis_int, na.rm=TRUE),
+    base_ren = mean(renewable_share, na.rm=TRUE)
+  ) %>%
+  mutate(
+    hi_int = base_int >= median(base_int, na.rm=TRUE),   # high emissions intensity
+    lo_ren = base_ren <= median(base_ren, na.rm=TRUE)    # low renewable share
+  )
+
+as_het <- analysis_sample %>% left_join(base, by = "country")
+
+# -----------------------
+# 1) DL × High-intensity
+# -----------------------
+m_hi <- feols(
+  log_co2_pc ~ l(cpi10, 0:2)*hi_int + lgdppc_c + ind_c + ren_c | country + year,
+  data = as_het, panel.id = ~ country + year, vcov = vcov_DK(~year, lag = 3)
+)
+
+# -----------------------
+# 2) DL × Low-renewables
+# -----------------------
+m_lr <- feols(
+  log_co2_pc ~ l(cpi10, 0:2)*lo_ren + lgdppc_c + ind_c + ren_c | country + year,
+  data = as_het, panel.id = ~ country + year, vcov = vcov_DK(~year, lag = 3)
+)
+
+# -----------------------
+# 3) Cumulative rows helper (baseline group vs interacted group)
+# -----------------------
+cum_row_group <- function(mod, group_name){  # group_name = "hi_int" or "lo_ren"
+  nm <- names(coef(mod)); V <- vcov(mod); b <- coef(mod)
+
+  base_terms <- nm[nm %in% c("cpi10","l(cpi10, 1)","l(cpi10, 2)")]
+  inter_terms <- nm[grepl(paste0(":", group_name, "TRUE$"), nm) &
+                    grepl("^cpi10|^l\\(cpi10, 1\\)|^l\\(cpi10, 2\\)", nm)]
+
+  vec_L <- function(terms){ L <- rep(0, length(nm)); L[match(terms, nm)] <- 1; L }
+
+  # Baseline (group==FALSE)
+  L_b <- vec_L(base_terms)
+  est_b <- sum(b[match(base_terms, nm)])
+  se_b  <- sqrt(drop(t(L_b) %*% V %*% L_b))
+
+  # Group TRUE: base + interactions
+  both <- c(base_terms, inter_terms)
+  L_g <- vec_L(both)
+  est_g <- sum(b[match(both, nm)])
+  se_g  <- sqrt(drop(t(L_g) %*% V %*% L_g))
+
+  list(
+    baseline = sprintf("%.3f\n(%.3f)", est_b, se_b),
+    group    = sprintf("%.3f\n(%.3f)", est_g, se_g)
+  )
+}
+
+rows_hi <- cum_row_group(m_hi, "hi_int")
+rows_lr <- cum_row_group(m_lr, "lo_ren")
+
+add_rows_hi <- tibble::tibble(
+  term = c("Cumulative CPI (t..t+2): low-intensity",
+           "Cumulative CPI (t..t+2): high-intensity"),
+  `By emissions intensity` = c(rows_hi$baseline, rows_hi$group)
+)
+
+add_rows_lr <- tibble::tibble(
+  term = c("Cumulative CPI (t..t+2): high-renewables",
+           "Cumulative CPI (t..t+2): low-renewables"),
+  `By renewable share` = c(rows_lr$baseline, rows_lr$group)
+)
+
+# -----------------------
+# 4) Publishable tables
+# -----------------------
+cm_het <- c(
+  "cpi10"                   = "CPI (t)  /  +10 €/t",
+  "l(cpi10, 1)"             = "CPI (t–1)",
+  "l(cpi10, 2)"             = "CPI (t–2)",
+  "cpi10:hi_intTRUE"        = "× High intensity",
+  "l(cpi10, 1):hi_intTRUE"  = "× High intensity (t–1)",
+  "l(cpi10, 2):hi_intTRUE"  = "× High intensity (t–2)",
+  "cpi10:lo_renTRUE"        = "× Low renewables",
+  "l(cpi10, 1):lo_renTRUE"  = "× Low renewables (t–1)",
+  "l(cpi10, 2):lo_renTRUE"  = "× Low renewables (t–2)",
+  "lgdppc_c"                = "Δ log GDPpc (ctr.)",
+  "ind_c"                   = "Δ Industry share (ctr.)",
+  "ren_c"                   = "Δ Renewable share (ctr.)"
+)
+
+modelsummary(
+  list("By emissions intensity" = m_hi),
+  coef_map  = cm_het,
+  gof_omit  = "IC|Log|Adj|F$|Std|^FE",
+  statistic = "({std.error})",
+  stars     = TRUE,
+  add_rows  = add_rows_hi,
+  notes     = "Country & year FE. SE: Driscoll–Kraay (lag=3). +1 in CPI regressor = +10 €/t. Pre-period for grouping: 2004–2006.",
+  output    = "table_heterogeneity_intensity.tex"
+)
+
+modelsummary(
+  list("By renewable share" = m_lr),
+  coef_map  = cm_het,
+  gof_omit  = "IC|Log|Adj|F$|Std|^FE",
+  statistic = "({std.error})",
+  stars     = TRUE,
+  add_rows  = add_rows_lr,
+  notes     = "Country & year FE. SE: Driscoll–Kraay (lag=3). +1 in CPI regressor = +10 €/t. Pre-period for grouping: 2004–2006.",
+  output    = "table_heterogeneity_renewables.tex"
+)
+
+
+```
+### RQ summaries
+Phase IV (RQ5):
+“Interacting CPI lags with Phase IV (2021–2023) shows that the cumulative 0–2-year effect becomes more negative in Phase IV than in earlier phases (Table ‘Phase IV’). While contemporaneous effects remain indistinguishable from zero, the one- and two-year responses are larger in magnitude under tighter caps and higher auctioning.”
+
+Heterogeneity (RQ2):
+“Cumulative 0–2-year effects are more negative in high-intensity and low-renewables countries (Table ‘By emissions intensity’ / ‘By renewable share’), consistent with greater abatement opportunities and stronger responses where carbon intensity is initially high or clean energy penetration is initially low.”
+
+# Additional analysis
+
+Local Projections × Phase IV (RQ5)
+
+What you’ll get: one table with horizons h = 0,1,2 showing:
+
+the baseline ΔCPI effect (pre-Phase IV),
+
+the differential ΔCPI × Phase IV,
+
+and an extra row “Effect in Phase IV (sum)” = baseline + differential with its SE (delta method).
+
+
+```{r}
+# 0) Clean keys & CPI change ( +1 == +10 €/t )
+analysis_sample$year <- as.integer(analysis_sample$year)
+stopifnot(!any(duplicated(analysis_sample[c("country","year")])))
+
+as_lp <- analysis_sample %>%
+  arrange(country, year) %>%
+  group_by(country) %>%
+  mutate(dcpi = cpi10 - lag(cpi10)) %>%
+  ungroup() %>%
+  mutate(phaseIV = year >= 2021)
+
+# 1) LP runner with Phase IV interaction
+run_lp_phase <- function(h){
+  dat_h <- as_lp %>%
+    group_by(country) %>%
+    mutate(y_h = dplyr::lead(log_co2_pc, h)) %>%
+    ungroup()
+  feols(y_h ~ dcpi * phaseIV + lgdppc_c + ind_c + ren_c | country + year,
+        data = dat_h,
+        vcov = vcov_DK(~ year, lag = 3))
+}
+
+mods_ph <- lapply(0:2, run_lp_phase)
+names(mods_ph) <- paste0("h=", 0:2)
+
+# 2) Helper: baseline ΔCPI and Phase IV "sum" (ΔCPI + ΔCPI×PhaseIV) with SE (delta)
+effect_sum <- function(mod, base_pat="^dcpi$", inter_pat="^dcpi:.*phaseIV.*$"){
+  nm <- names(coef(mod)); b <- coef(mod); V <- vcov(mod)
+  base <- nm[grepl(base_pat, nm)]
+  inter <- nm[grepl(inter_pat, nm)]
+  # baseline
+  est_b <- sum(b[base]); se_b <- sqrt(drop(t(1) %*% V[base, base, drop=FALSE] %*% 1))
+  # sum (baseline + interaction)
+  idx <- c(base, inter)
+  L <- matrix(1, nrow=1, ncol=length(idx))
+  est_s <- sum(b[idx]); se_s <- sqrt(drop(L %*% V[idx, idx, drop=FALSE] %*% t(L)))
+  list(baseline = sprintf("%.3f\n(%.3f)", est_b, se_b),
+       phaseIV  = sprintf("%.3f\n(%.3f)", est_s, se_s))
+}
+
+rows <- lapply(mods_ph, effect_sum)
+
+add_rows_phase <- tibble::tibble(
+  term = c("Effect in Phase IV (ΔCPI + ΔCPI×Phase IV)"),
+  !!!setNames(lapply(rows, `[[`, "phaseIV"), names(mods_ph))
+)
+
+# 3) Publishable table (only print ΔCPI and interaction in the body; sum goes in add_rows)
+cm_phase <- c("dcpi" = "ΔCPI (+10 €/t)",
+              "dcpi:phaseIVTRUE" = "ΔCPI × Phase IV")
+
+modelsummary(
+  mods_ph,
+  coef_map  = cm_phase,
+  coef_omit = "^(?!dcpi$|dcpi:phaseIVTRUE$).*",  # keep only these two
+  gof_omit  = "IC|Log|Adj|F$|Std|^FE",
+  statistic = "({std.error})",
+  stars     = TRUE,
+  add_rows  = add_rows_phase,
+  notes     = "Local projections of y_{t+h} on ΔCPI_t (+10 €/t), with country & year FE and controls; SE: Driscoll–Kraay (lag=3).",
+  output    = "table_lp_phaseIV.tex"
+)
+
+```
 

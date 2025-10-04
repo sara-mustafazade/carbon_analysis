@@ -1,0 +1,30 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+entry=none,label=none,
+note{}={+ p \num{< 0.1}, * p \num{< 0.05}, ** p \num{< 0.01}, *** p \num{< 0.001}},
+note{ }={Local projections of y\_\{t+h\} on ΔCPI\_t (+10 €/t), with country \& year FE and controls; SE: Driscoll–Kraay (lag=3).},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]Q[]},
+column{2-4}={}{halign=c,},
+column{1}={}{halign=l,},
+hline{6}={1-4}{solid, black, 0.05em},
+}                     %% tabularray inner close
+\toprule
+& h=0 & h=1 & h=2 \\ \midrule %% TinyTableHeader
+ΔCPI (+10 €/t) & \num{0.002} & \num{-0.009}+ & \num{-0.013}** \\
+& (\num{0.009}) & (\num{0.005}) & (\num{0.003}) \\
+ΔCPI × Phase IV & \num{0.023} & \num{0.004} & \num{-0.016} \\
+& (\num{0.017}) & (\num{0.010}) & (\num{0.012}) \\
+Num.Obs. & \num{513} & \num{486} & \num{459} \\
+R2 & \num{0.956} & \num{0.953} & \num{0.951} \\
+R2 Within & \num{0.326} & \num{0.257} & \num{0.193} \\
+RMSE & \num{0.08} & \num{0.09} & \num{0.09} \\
+Effect in Phase IV (ΔCPI + ΔCPI×Phase IV) & 0.026
+(0.011) & -0.005
+(0.009) & -0.029
+(0.012) \\
+\bottomrule
+\end{talltblr}
+\end{table}

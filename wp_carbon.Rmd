@@ -1,0 +1,298 @@
+---
+title: "wp_carbon"
+author: "sara"
+date: "2025-10-04"
+output: html_document
+---
+
+# Abstract
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#setwd("~/Library/CloudStorage/OneDrive-umontpellier.fr/Project 2/carbon analysis")
+knitr::opts_knit$set(root.dir = "/Users/saramustafazade/Library/CloudStorage/OneDrive-umontpellier.fr/Project 2/carbon analysis")
+
+```
+
+# Data loading and cleaning
+
+```{r}
+# Packages
+library(skimr)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(readr)
+library(stringr)
+# to pull variables
+library(eurostat)
+library(countrycode)
+library(WDI)
+# for regression
+library(fixest)
+library(broom)
+library(fixest)
+library(modelsummary)
+library(glue)
+
+# Load the data
+
+# read the sheet called "final_sheet"
+df <- read_excel("carbon_index_2025.xlsx", sheet = "final_sheet")
+co2<- read_excel("IEA_EDGAR_CO2_1970_2023.xlsx", sheet = "TOTALS BY COUNTRY")
+
+# check the data
+#head(df)
+#head(oecd)
+```
+
+Filetiring EU countries from our dataset
+```{r}
+
+# vector of EU countries
+eu_countries <- c(
+  "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czech Republic",
+  "Denmark", "Estonia", "Finland", "France", "Germany", "Greece", "Hungary",
+  "Ireland", "Italy", "Latvia", "Lithuania", "Luxembourg", "Malta",
+  "Netherlands", "Poland", "Portugal", "Romania", "Slovakia", "Slovenia",
+  "Spain", "Sweden"
+)
+# filter only EU countries
+df_eu <- df %>% 
+  filter(ds_country %in% eu_countries)  
+
+co2_eu <- co2 %>%
+  filter(Name %in% eu_countries)
+
+
+# check
+#head(df_eu)
+#head(co2_eu)
+```
+
+```{r}
+# create a summary table showing the earliest start year for each mechanism in each country
+summary_tbl <- df_eu %>% 
+  group_by(ds_country, implemented_mechanisms) %>% 
+  summarize(start_year = min(start_year, na.rm = TRUE), .groups = "drop" )
+
+#view the summary table
+summary_tbl
+```
+
+```{r}
+# Preparing CO2 emission data for merging
+co2_eu_filtered <- co2_eu %>%
+  select(IPCC_annex, C_group_IM24_sh, Country_code_A3, Name, Substance,
+         Y_2000:Y_2023)
+
+# Reshaping CO2 data from wide to long format
+
+co2_eu_long <- co2_eu %>%
+  pivot_longer(cols = starts_with("Y_"),
+               names_to = "year",
+               values_to = "co2") %>%
+  mutate(year = as.integer(sub("Y_", "", year))) %>%
+  filter(year >= 2000 & year <= 2023)
+
+# CO2 table: standardize to the same key ---
+co2_key <- co2_eu_long %>%
+  filter(Substance == "CO2") %>%
+  rename(iso3 = Country_code_A3) %>%
+  select(iso3, year, co2)   # keep only what's needed
+
+```
+
+```{r df_eu to long}
+# ==============================================================================
+# ## Step 1: Pivot the Carbon Pricing Index Data to a Long Format
+# ==============================================================================
+# We select the country identifiers and all columns that start with "carbon_pricing_index_"
+
+cpi_long <- df_eu %>%
+  select(ds_country, iso3, starts_with("carbon_pricing_index_")) %>%
+  pivot_longer(
+    cols = -c(ds_country, iso3),
+    names_to = "year",
+    values_to = "carbon_pricing_index"
+  ) %>%
+  mutate(year = str_remove(year, "carbon_pricing_index_"))%>%
+  mutate(year = as.integer(year))
+# ==============================================================================
+# ## Step 3: Join the Two Long Datasets into a Final Panel
+# ==============================================================================
+
+# We join by country and year to bring everything together.
+# We also convert 'year' to a numeric type for easier analysis.
+panel_df <- co2_key %>%
+  full_join(cpi_long, by = c( "iso3", "year")) %>%
+  mutate(year = as.numeric(year)) %>%
+  arrange(iso3, year)
+
+# --- View the result ---
+cat("Data has been successfully transformed into a long panel format:\n")
+head(panel_df)
+
+
+```
+
+### Pulling control variables
+
+1) Pull from WDI
+
+```{r}
+
+# Step 1: correct indicator codes
+wdi_vars <- c("NY.GDP.MKTP.KD",   # GDP (constant 2015 US$)
+              "SP.POP.TOTL",      # Population
+              "NV.IND.TOTL.ZS")   # Industry share of GDP (%)
+
+# Step 2: fetch from World Bank
+wdi_raw <- WDI(
+  country = "all",
+  indicator = wdi_vars,
+  start = 2000,
+  end = 2025
+)
+# Step 3: Clean and rename (Corrected version)
+wdi_clean <- wdi_raw %>%
+  rename(
+    iso3 = iso3c,  # Use the existing iso3c column as the identifier
+    year = year,
+    gdp = NY.GDP.MKTP.KD,
+    population = SP.POP.TOTL,
+    industry_share = NV.IND.TOTL.ZS
+  ) %>%
+  select(country, iso3, year, gdp, population, industry_share) # Keep the original country name and the new iso3
+
+# Define EU countries in ISO3 codes
+eu_iso3 <- c("AUT","BEL","BGR","HRV","CYP","CZE","DNK","EST","FIN","FRA","DEU",
+             "GRC","HUN","IRL","ITA","LVA","LTU","LUX","MLT","NLD","POL","PRT",
+             "ROU","SVK","SVN","ESP","SWE")
+
+# Keep only EU countries using the clean 'iso3' column
+wdi_eu <- wdi_clean %>%
+  filter(iso3 %in% eu_iso3)
+
+# Quick check to confirm
+head(wdi_eu)
+
+
+#############
+
+# 2) Merge with your dataset
+merged_controls <- panel_df %>%
+  left_join(wdi_eu, by = c("iso3", "year"))
+
+
+# 3) Create transformed controls
+merged_controls <- merged_controls %>%
+  mutate(
+    log_gdp = log(gdp),
+    log_pop = log(population),
+    gdp_per_capita = gdp / population,
+    log_gdp_pc = log(gdp_per_capita)
+  )
+
+```
+Pulling renewable energy share from Eurostat.
+nrg_ind_ren, is one of Eurostat's main energy indicators.
+```{r}
+
+# EU-27 (Greece is "EL" in Eurostat)
+eu_geo <- c("AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","EL","HU",
+            "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE")
+
+# Pull raw (cache speeds things up), detect the time col (time or TIME_PERIOD)
+renewables_raw <- get_eurostat("nrg_ind_ren", cache = TRUE)  # time can be Date or TIME_PERIOD
+time_col <- intersect(c("time","TIME_PERIOD"), names(renewables_raw))[1]
+
+# Collapse to one obs per country–year, keep unit == % (PC)
+renewables_eu <- renewables_raw %>%
+  filter(geo %in% eu_geo, unit == "PC") %>%
+  group_by(geo, !!sym(time_col)) %>%
+  summarise(renewable_share_pc = mean(values, na.rm = TRUE), .groups = "drop") %>%
+  rename(year_raw = !!sym(time_col)) %>%
+  mutate(
+    year    = as.integer(format(as.Date(year_raw), "%Y")),
+    year    = ifelse(is.na(year), as.integer(year_raw), year),
+    # Create the 'iso3' column directly with the correct name
+    iso3 = countrycode(geo, "eurostat", "iso3c") 
+  ) %>%
+  # Select only the columns needed, using the 'iso3' name
+  select(iso3, year, renewable_share_pc) %>% 
+  arrange(iso3, year)
+
+# (The rest of the script for padding and merging remains the same)
+
+# The final merge will now work perfectly
+merged_final <- merged_controls %>%
+  left_join(renewables_eu, by = c("iso3", "year")) # Merging by 'iso3'
+# Safety checks
+stopifnot(!anyDuplicated(renewables_eu[c("iso3","year")]))
+
+# Optional: pad to full 2000–2025 panel
+renewables_eu <- renewables_eu %>%
+  complete(iso3, year = 2000:2025) %>%
+  mutate(renewable_share = renewable_share_pc / 100)  # fraction 0–1 (keep both if you like)
+
+# Merge with your main panel (iso3, year)
+merged_final <- merged_controls %>%
+  left_join(renewables_eu, by = c("iso3","year"))
+
+# Sanity Checks (if necessery uncomment)
+
+# # Post-merge sanity: duplicates? missingness?
+# stopifnot(!anyDuplicated(merged_final[c("iso3","year")]))
+# 
+# # coverage summary
+# renewables_eu %>%
+#   group_by(iso3) %>%
+#   summarise(n_years = n_distinct(year),
+#             min_year = min(year), max_year = max(year), .groups = "drop") %>%
+#   arrange(iso3)
+# 
+# nrow(renewables_eu)        # expect ~27 * 20 = 540 (2004–2023)
+# length(unique(renewables_eu$iso3))  # expect 27
+# length(unique(renewables_eu$year))     # expect 20
+
+
+```
+
+```{r}
+
+#  Create ONLY the missing outcome variants (keep your existing log_gdp_pc)
+merged_final <- merged_final %>%
+  mutate(
+    # safe logs (NA if non-positive)
+    log_co2     = ifelse(co2 > 0, log(co2), NA_real_),
+    co2_pc      = co2 / population,
+    log_co2_pc  = ifelse(co2_pc > 0, log(co2_pc), NA_real_),
+    emis_int    = co2 / gdp,              # emissions intensity
+    # optional: fraction 0–1 if you kept renewable_share_pc earlier
+    renewable_share = ifelse(!is.na(renewable_share), renewable_share,
+                             ifelse(exists("renewable_share_pc"),
+                                    renewable_share_pc/100, NA_real_))
+  )
+
+# Define your main estimation sample (overlap years; drop NAs in key vars)
+analysis_sample <- merged_final %>%
+  filter(year >= 2004, year <= 2023) %>%     # renewables start in 2004
+  tidyr::drop_na(log_co2, carbon_pricing_index, log_gdp_pc, industry_share, renewable_share)
+
+# Scales & centering (for interpretability & interactions)
+analysis_sample <- analysis_sample %>%
+  mutate(
+    cpi10   = carbon_pricing_index / 10,            # 10-pt change
+    lcpi    = log1p(carbon_pricing_index),          # optional robustness
+    ren_c   = scale(renewable_share, scale = FALSE),# mean-centered
+    lgdppc_c= scale(log_gdp_pc, scale = FALSE),
+    ind_c   = scale(industry_share, scale = FALSE),
+    t       = year                                   # for trends
+  )
+
+```
+
+# Analysis
+

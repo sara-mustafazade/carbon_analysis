@@ -1,0 +1,40 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+entry=none,label=none,
+note{}={+ p \num{< 0.1}, * p \num{< 0.05}, ** p \num{< 0.01}, *** p \num{< 0.001}},
+note{ }={Country \& year FE. SE: Driscoll–Kraay (lag=3). +1 in CPI regressor = +10 €/t. Pre-period for grouping: 2004–2006.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]},
+column{2}={}{halign=c,},
+column{1}={}{halign=l,},
+hline{16}={1-2}{solid, black, 0.05em},
+}                     %% tabularray inner close
+\toprule
+& By emissions intensity \\ \midrule %% TinyTableHeader
+CPI (t–1) & \num{-0.018}* \\
+& (\num{0.007}) \\
+CPI (t–2) & \num{-0.011} \\
+& (\num{0.008}) \\
+× High intensity (t–1) & \num{0.008} \\
+& (\num{0.005}) \\
+× High intensity (t–2) & \num{0.028}** \\
+& (\num{0.009}) \\
+Δ log GDPpc (ctr.) & \num{0.309}*** \\
+& (\num{0.030}) \\
+Δ Industry share (ctr.) & \num{0.002} \\
+& (\num{0.002}) \\
+Δ Renewable share (ctr.) & \num{-1.749}*** \\
+& (\num{0.124}) \\
+Num.Obs. & \num{486} \\
+R2 & \num{0.958} \\
+R2 Within & \num{0.333} \\
+RMSE & \num{0.08} \\
+Cumulative CPI (t..t+2): low-intensity & -0.030
+(0.007) \\
+Cumulative CPI (t..t+2): high-intensity & 0.007
+(0.013) \\
+\bottomrule
+\end{talltblr}
+\end{table}

@@ -1,0 +1,40 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+entry=none,label=none,
+note{}={+ p \num{< 0.1}, * p \num{< 0.05}, ** p \num{< 0.01}, *** p \num{< 0.001}},
+note{ }={Country \& year FE. SE: Driscoll–Kraay (lag=3). +1 in CPI regressor = +10 €/t.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]},
+column{2}={}{halign=c,},
+column{1}={}{halign=l,},
+hline{16}={1-2}{solid, black, 0.05em},
+}                     %% tabularray inner close
+\toprule
+& Phase IV (per-capita) \\ \midrule %% TinyTableHeader
+CPI (t–1) & \num{-0.012} \\
+& (\num{0.007}) \\
+CPI (t–2) & \num{0.004} \\
+& (\num{0.009}) \\
+× Phase IV (t–1) & \num{-0.012} \\
+& (\num{0.012}) \\
+× Phase IV (t–2) & \num{-0.021} \\
+& (\num{0.017}) \\
+Δ log GDPpc (ctr.) & \num{0.324}*** \\
+& (\num{0.029}) \\
+Δ Industry share (ctr.) & \num{0.002} \\
+& (\num{0.003}) \\
+Δ Renewable share (ctr.) & \num{-1.827}*** \\
+& (\num{0.117}) \\
+Num.Obs. & \num{486} \\
+R2 & \num{0.957} \\
+R2 Within & \num{0.324} \\
+RMSE & \num{0.08} \\
+Cumulative CPI (t..t+2), pre-Phase IV & -0.008
+(0.010) \\
+Cumulative CPI (t..t+2), Phase IV & -0.041
+(0.014) \\
+\bottomrule
+\end{talltblr}
+\end{table}

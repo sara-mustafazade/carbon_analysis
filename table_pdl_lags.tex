@@ -1,0 +1,23 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+entry=none,label=none,
+note{}={PDL degree-2 over CPI lags 0..3. +1 in CPI regressor = +10 €/t. Country \& year FE; SE: Driscoll–Kraay (lag=3).},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]Q[]},
+column{1-4}={}{halign=l,},
+}                     %% tabularray inner close
+\toprule
+Lag (years) & Effect & SE & 95\% CI \\ \midrule %% TinyTableHeader
+Panel A: Implied lag coefficients & NA & NA & NA \\
+t+0 & 0.008 & (0.008) & [-0.008, 0.025] \\
+t+1 & -0.013 & (0.004) & [-0.020, -0.005] \\
+t+2 & -0.011 & (0.006) & [-0.023, -0.000] \\
+t+3 & 0.013 & (0.008) & [-0.002, 0.027] \\
+Panel B: Cumulative effects & NA & NA & NA \\
+Cumulative t..t+2 & -0.016 & (0.005) & [-0.026, -0.006] \\
+Cumulative t..t+3 & -0.004 & (0.006) & [-0.015, 0.008] \\
+\bottomrule
+\end{talltblr}
+\end{table}
