@@ -340,28 +340,80 @@ as_lp <- analysis_sample |>
 run_lp <- function(h) feols(flead(log_co2_pc, h) ~ dcpi + lgdppc_c + ind_c + ren_c |
                             country + year, data = as_lp, vcov = vcov_DK(~year, lag = 3))
 etable(lapply(0:3, run_lp), headers = paste0("h=",0:3), se.below=TRUE)
+etable(m_l3, m_almon, se.below=TRUE)
+
+```
 
 
+```{r}
+
+
+# Build 0..3 lags and degree-2 PDL basis
+as_pdl <- analysis_sample %>%
+  arrange(country, year) %>%
+  group_by(country) %>%
+  mutate(
+    cpi_l0 = cpi10,
+    cpi_l1 = lag(cpi10, 1),
+    cpi_l2 = lag(cpi10, 2),
+    cpi_l3 = lag(cpi10, 3),
+    pdl0   = cpi_l0 + cpi_l1 + cpi_l2 + cpi_l3,                  # Σ k^0 L^k x
+    pdl1   = 0*cpi_l0 + 1*cpi_l1 + 2*cpi_l2 + 3*cpi_l3,          # Σ k^1 L^k x
+    pdl2   = 0^2*cpi_l0 + 1^2*cpi_l1 + 2^2*cpi_l2 + 3^2*cpi_l3   # Σ k^2 L^k x
+  ) %>%
+  ungroup()
+
+m_pdl <- feols(
+  log_co2_pc ~ pdl0 + pdl1 + pdl2 + lgdppc_c + ind_c + ren_c | country + year,
+  data = as_pdl,
+  vcov = vcov_DK(~ year, lag = 3)
+)
+
+etable(m_pdl, se.below = TRUE)
 ```
 ```{r}
-pkgbuild::has_build_tools(debug = TRUE)
+# Implied lag betas and their SEs
+a <- coef(m_pdl)[c("pdl0","pdl1","pdl2")]
+V <- vcov(m_pdl)[c("pdl0","pdl1","pdl2"), c("pdl0","pdl1","pdl2")]
 
-# Change the download method
-options(download.file.method = "libcurl")
+k <- 0:3
+b_hat <- as.numeric(a[1] + a[2]*k + a[3]*k^2)
+J <- cbind(1, k, k^2)                            # db/da
+se_b <- sqrt(diag(J %*% V %*% t(J)))
+lag_df <- data.frame(lag=k, beta=b_hat, se=se_b,
+                     lo=b_hat - 1.96*se_b, hi=b_hat + 1.96*se_b)
 
-# Try installing again
-remotes::install_github("lrberge/fixest")
+# Cumulative effects 0–2 and 0–3 with CIs
+Sigma_b <- J %*% V %*% t(J)                      # cov(implied betas)
+L02 <- matrix(c(1,1,1,0), 1) ; L03 <- matrix(c(1,1,1,1), 1)
+est02 <- as.numeric(L02 %*% b_hat)
+se02  <- sqrt(as.numeric(L02 %*% Sigma_b %*% t(L02)))
+ci02  <- est02 + c(-1,1)*1.96*se02
 
-install.packages("C:/Users/sara/Downloads/lrberge-fixest-v0.13.2-7-g7e79024.tar.gz", repos = NULL, type = "source")
+est03 <- as.numeric(L03 %*% b_hat)
+se03  <- sqrt(as.numeric(L03 %*% Sigma_b %*% t(L03)))
+ci03  <- est03 + c(-1,1)*1.96*se03
+
+list(lag_table = lag_df,
+     cum_0_2 = c(est=est02, se=se02, lo=ci02[1], hi=ci02[2]),
+     cum_0_3 = c(est=est03, se=se03, lo=ci03[1], hi=ci03[2]))
+
 ```
+
 ```{r}
-# To install from CRAN:
-install.packages("fixest")
+# After running your model...
+gamma <- coef(m_pdl)[c("pdl0", "pdl1", "pdl2")]
 
-# To install the latest stable development release:
-install.packages("fixest", 
-                 repos = c(ropensci = 'https://fastverse.r-universe.dev',
-                           CRAN = 'https://cloud.r-project.org'))
+# Calculate the effect for each lag
+beta_k <- c(
+  "lag0" = gamma["pdl0"],
+  "lag1" = gamma["pdl0"] + gamma["pdl1"]*1 + gamma["pdl2"]*1^2,
+  "lag2" = gamma["pdl0"] + gamma["pdl1"]*2 + gamma["pdl2"]*2^2,
+  "lag3" = gamma["pdl0"] + gamma["pdl1"]*3 + gamma["pdl2"]*3^2
+)
+
+print(beta_k)
 ```
+
 
 

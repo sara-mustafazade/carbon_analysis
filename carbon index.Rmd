@@ -14,7 +14,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 # Packages
-library(remotes)
 library(skimr)
 library(readxl)
 library(dplyr)
@@ -30,7 +29,7 @@ library(WDI)
 
 library(fixest)
 library(broom)
-remotes::install_github("lrberge/fixest")
+install.packages('fixest', repos = c('https://fastverse.r-universe.dev', 'https://cloud.r-project.org'))
 # Load the data
 # On the environmental Policy Stringency (EPS) index from OECD
 #oecd <- read_csv("OECD.ECO.MAD,DSD_EPS@DF_EPS,1.0+.A..EPS.csv")
