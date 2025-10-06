@@ -386,7 +386,7 @@ any(duplicated(analysis_sample[c("country","year")]))
 m_l3 <- feols(
   log_co2_pc ~ l(cpi10, 0:3) + lgdppc_c + ind_c + ren_c | country + year,
   data      = analysis_sample,
-  panel.id  = ~ country + year,               # <-- add this
+  panel.id  = ~ country + year,           
   vcov      = vcov_DK(~ year, lag = 3)
 )
 etable(m_l3, se.below = TRUE)
@@ -396,7 +396,7 @@ cum_wald(m_l3, coefs = c("cpi10","l(cpi10, 1)","l(cpi10, 2)","l(cpi10, 3)"))
 ```
 
 
-```{r}
+```{r does not work}
 #Smoothed distributed lag (Almon PDL): 
 feols(log_co2_pc ~ almon(cpi10, 0:3, 2) + lgdppc_c + ind_c + ren_c | country + year,
       data = analysis_sample,
