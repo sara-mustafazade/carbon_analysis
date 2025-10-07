@@ -1,0 +1,49 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+entry=none,label=none,
+note{}={+ p \num{< 0.1}, * p \num{< 0.05}, ** p \num{< 0.01}, *** p \num{< 0.001}},
+note{ }={High price defined as CPI ≥ 30 €/t (cpi10 ≥ 3). Country \& year FE; SE: Driscoll–Kraay (lag=3). +1 in CPI regressor = +10 €/t.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]},
+column{2}={}{halign=c,},
+column{1}={}{halign=l,},
+hline{20}={1,2}{solid, black, 0.05em},
+}                     %% tabularray inner close
+\toprule
+& High-price regime (DL) \\ \midrule %% TinyTableHeader
+CPI (t) / +10 €/t & \num{-0.002} \\
+& (\num{0.012}) \\
+CPI (t–1) & \num{-0.008} \\
+& (\num{0.008}) \\
+CPI (t–2) & \num{0.013} \\
+& (\num{0.010}) \\
+× High price (t) & \num{0.018} \\
+& (\num{0.014}) \\
+× High price (t–1) & \num{-0.009} \\
+& (\num{0.009}) \\
+× High price (t–2) & \num{-0.030}* \\
+& (\num{0.012}) \\
+Δ log GDPpc (ctr.) & \num{0.328}*** \\
+& (\num{0.027}) \\
+Δ Industry share (ctr.) & \num{0.001} \\
+& (\num{0.003}) \\
+Δ Renewable share (ctr.) & \num{-1.821}*** \\
+& (\num{0.121}) \\
+Num.Obs. & \num{486} \\
+R2 & \num{0.957} \\
+R2 Adj. & \num{0.952} \\
+R2 Within & \num{0.326} \\
+R2 Within Adj. & \num{0.310} \\
+AIC & \num{-951.5} \\
+BIC & \num{-725.5} \\
+RMSE & \num{0.08} \\
+Std.Errors & Driscoll-Kraay (L=3) \\
+FE: country & X \\
+FE: year & X \\
+Cumulative CPI (t..t+2): Low price (<30€) & 0.003(0.012) \\
+Cumulative CPI (t..t+2): High price (≥30€) & -0.019(0.004) \\
+\bottomrule
+\end{talltblr}
+\end{table}

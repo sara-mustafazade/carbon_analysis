@@ -9,32 +9,34 @@ note{ }={Country \& year FE. SE: Driscoll–Kraay (lag=3). +1 in CPI regressor =
 colspec={Q[]Q[]},
 column{2}={}{halign=c,},
 column{1}={}{halign=l,},
-hline{16}={1-2}{solid, black, 0.05em},
+hline{20}={1,2}{solid, black, 0.05em},
 }                     %% tabularray inner close
 \toprule
 & By renewable share \\ \midrule %% TinyTableHeader
+CPI (t)  /  +10 €/t & \num{-0.001} \\
+& (\num{0.010}) \\
 CPI (t–1) & \num{-0.023}* \\
 & (\num{0.009}) \\
 CPI (t–2) & \num{0.001} \\
-& (\num{0.011}) \\
+& (\num{0.010}) \\
+× Low renewables & \num{0.008} \\
+& (\num{0.006}) \\
 × Low renewables (t–1) & \num{0.015} \\
 & (\num{0.011}) \\
 × Low renewables (t–2) & \num{0.009} \\
 & (\num{0.014}) \\
 Δ log GDPpc (ctr.) & \num{0.315}*** \\
-& (\num{0.034}) \\
+& (\num{0.033}) \\
 Δ Industry share (ctr.) & \num{0.001} \\
 & (\num{0.003}) \\
 Δ Renewable share (ctr.) & \num{-1.843}*** \\
-& (\num{0.117}) \\
+& (\num{0.114}) \\
 Num.Obs. & \num{486} \\
 R2 & \num{0.958} \\
 R2 Within & \num{0.336} \\
 RMSE & \num{0.08} \\
-Cumulative CPI (t..t+2): high-renewables & -0.021
-(0.009) \\
-Cumulative CPI (t..t+2): low-renewables & 0.003
-(0.021) \\
+Cumulative CPI (t..t+2): high-renewables & -0.022(0.007) \\
+Cumulative CPI (t..t+2): low-renewables & 0.009(0.016) \\
 \bottomrule
 \end{talltblr}
 \end{table}

@@ -600,6 +600,23 @@ modelsummary(
 
 ```
 
+```{r}
+library(tibble); library(dplyr); library(ggplot2)
+lp <- tribble(
+  ~h, ~beta,  ~se,
+   0,  0.010, 0.009,
+   1, -0.008, 0.004,
+   2, -0.016, 0.004,
+   3, -0.000, 0.009
+) %>% mutate(lo = beta - 1.96*se, hi = beta + 1.96*se)
+ggplot(lp, aes(h, beta)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.1) +
+  labs(x = "Horizon (years)", y = "Semi-elasticity (log emissions % per +10 €/t)")
+
+```
+
 
 3) PDL (degree-2, lags 0..3): implied lag betas & cumulatives
 
@@ -654,7 +671,48 @@ modelsummary::datasummary_df(
 )
 
 ```
+R skeleton to estimate and recover implied betas (for Almond Polynomial)
 
+```{r not important}
+#optional
+
+# 1) build lags 0..3
+df <- df %>%
+  group_by(country) %>%
+  arrange(year, .by_group = TRUE) %>%
+  mutate(cpi_l0 = cpi10,
+         cpi_l1 = dplyr::lag(cpi10, 1),
+         cpi_l2 = dplyr::lag(cpi10, 2),
+         cpi_l3 = dplyr::lag(cpi10, 3)) %>%
+  ungroup()
+
+# 2) build Almon (degree 2) transformed regressors
+df <- df %>%
+  mutate(Z0 = cpi_l0 + cpi_l1 + cpi_l2 + cpi_l3,
+         Z1 = 0*cpi_l0 + 1*cpi_l1 + 2*cpi_l2 + 3*cpi_l3,
+         Z2 = 0^2*cpi_l0 + 1^2*cpi_l1 + 2^2*cpi_l2 + 3^2*cpi_l3)
+
+# 3) FE estimation with DK(3) SE via plm
+form <- y ~ Z0 + Z1 + Z2 + controls... # add your controls; include factor(year) if you prefer explicit year FE
+m_pdl <- plm(form, data = df, model = "within", index = c("country","year"), effect = "twoways")
+
+V_DK  <- vcovSCC(m_pdl, type = "HC0", maxlag = 3)  # Driscoll–Kraay (lag=3)
+coeftest(m_pdl, V_DK)
+
+# 4) recover implied betas and cumulatives via delta method
+delta  <- coef(m_pdl)[c("Z0","Z1","Z2")]
+V      <- V_DK[c("Z0","Z1","Z2"), c("Z0","Z1","Z2")]
+
+ck <- function(k) c(1, k, k^2)
+beta_k <- sapply(0:3, function(k) t(ck(k)) %*% delta)
+se_k   <- sapply(0:3, function(k) sqrt(t(ck(k)) %*% V %*% ck(k)))
+
+C  <- rowSums(sapply(0:2, ck))      # cumulative 0..2
+C2 <- rowSums(sapply(0:3, ck))      # cumulative 0..3
+beta_02 <- as.numeric(t(C)  %*% delta);  se_02 <- as.numeric(sqrt(t(C)  %*% V %*% C))
+beta_03 <- as.numeric(t(C2) %*% delta);  se_03 <- as.numeric(sqrt(t(C2) %*% V %*% C2))
+
+```
 
 ## RQ 5 
 Phase IV (RQ5): Are effects stronger in Phase IV?
@@ -739,6 +797,29 @@ modelsummary(
   notes     = "Country & year FE. SE: Driscoll–Kraay (lag=3). +1 in CPI regressor = +10 €/t.",
   output    = "table_phaseIV.tex"   # change to "markdown" or "html" if you prefer
 )
+
+```
+
+Bar plot for Phase IV vs pre-Phase IV (cumulative 0–2y)
+
+```{r}
+
+
+df_phase <- tibble::tibble(
+  group = c("Pre-Phase IV","Phase IV"),
+  est   = c(-0.008, -0.041),  # from your table
+  se    = c(0.010, 0.014)
+) |>
+  mutate(lo = est - 1.96*se,
+         hi = est + 1.96*se)
+
+ggplot(df_phase, aes(x = group, y = est)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_col(width = 0.6) +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.15) +
+  labs(x = NULL,
+       y = "Cumulative effect on log CO_2 (0–2y) per +10 €/t",
+       title = "Stronger emissions response in EU ETS Phase IV")
 
 ```
 
@@ -949,6 +1030,147 @@ modelsummary(
   add_rows  = add_rows_phase,
   notes     = "Local projections of y_{t+h} on ΔCPI_t (+10 €/t), with country & year FE and controls; SE: Driscoll–Kraay (lag=3).",
   output    = "table_lp_phaseIV.tex"
+)
+
+```
+
+### RQ 5 price level dummies
+
+High-price regime (time-varying, balanced across years)
+
+Use a threshold like 30 €/t (or 20/40 in robustness). This uses all years but separates low vs high stringency.
+
+Distributed lags (DL) with threshold interaction + cumulative 0..2y
+```{r}
+
+
+as_thr <- analysis_sample %>%
+  mutate(high30 = cpi10 >= 3)  # +1 in cpi10 = +10 €/t  ⇒  3 ↔ 30 €/t
+
+m_thr <- feols(
+  log_co2_pc ~ l(cpi10, 0:2)*high30 + lgdppc_c + ind_c + ren_c | country + year,
+  data = as_thr, panel.id = ~ country + year, vcov = vcov_DK(~year, lag = 3)
+)
+
+# cumulative rows: baseline (low-price) vs high-price = baseline + interaction
+cum_row_group <- function(mod, group_name){
+  nm <- names(coef(mod)); V <- vcov(mod); b <- coef(mod)
+  base_terms  <- c("cpi10","l(cpi10, 1)","l(cpi10, 2)")
+  inter_terms <- nm[grepl(paste0("^cpi10:", group_name, "TRUE$|^l\\(cpi10, 1\\):", group_name, "TRUE$|^l\\(cpi10, 2\\):", group_name, "TRUE$"), nm)]
+  idx_base <- match(base_terms, nm)
+  Lb <- rep(0, length(nm)); Lb[idx_base] <- 1
+  est_b <- sum(b[idx_base]); se_b <- sqrt(drop(t(Lb) %*% V %*% Lb))
+  idx_high <- match(c(base_terms, inter_terms), nm)
+  Lh <- rep(0, length(nm)); Lh[idx_high] <- 1
+  est_h <- sum(b[idx_high]); se_h <- sqrt(drop(t(Lh) %*% V %*% Lh))
+  tibble::tibble(term = c("Cumulative CPI (t..t+2): Low price (<30€)","Cumulative CPI (t..t+2): High price (≥30€)"),
+                 `High-price regime (DL)` = c(sprintf("%.3f\n(%.3f)", est_b, se_b),
+                                               sprintf("%.3f\n(%.3f)", est_h, se_h)))
+}
+
+add_rows_thr <- cum_row_group(m_thr, "high30")
+
+cm_thr <- c(
+  "cpi10" = "CPI (t) / +10 €/t",
+  "l(cpi10, 1)" = "CPI (t–1)",
+  "l(cpi10, 2)" = "CPI (t–2)",
+  "cpi10:high30TRUE" = "× High price (t)",
+  "l(cpi10, 1):high30TRUE" = "× High price (t–1)",
+  "l(cpi10, 2):high30TRUE" = "× High price (t–2)",
+  "lgdppc_c" = "Δ log GDPpc (ctr.)",
+  "ind_c" = "Δ Industry share (ctr.)",
+  "ren_c" = "Δ Renewable share (ctr.)"
+)
+
+modelsummary(
+  list("High-price regime (DL)" = m_thr),
+  coef_map = cm_thr,
+  coef_omit = "IC|Log|Adj|F$|Std|^FE",
+  statistic = "({std.error})",
+  stars = TRUE,
+  add_rows = add_rows_thr,
+  notes = "High price defined as CPI ≥ 30 €/t (cpi10 ≥ 3). Country & year FE; SE: Driscoll–Kraay (lag=3). +1 in CPI regressor = +10 €/t.",
+  output = "table_highprice_dl.tex"
+)
+
+```
+high-price regime table cleanly shows a nonlinear response:
+
+Cumulative (t..t+2) at low price (<30 €/t): +0.003 (SE 0.012) → ~0%, n.s.
+
+Cumulative (t..t+2) at high price (≥30 €/t): −0.019 (SE 0.004) → −1.9%, p<0.001, 95% CI ≈ [−2.7%, −1.1%].
+
+Lag pattern: the only significant interaction is *t–2 × High price (−0.030)**, i.e., the reduction materializes in the second year when prices are high. This nails your story: prices need to be high to bite, and the effect is lagged.
+
+
+Nonlinearity by price level. We interact the CPI distributed lags with a high-price regime (CPI ≥ 30 €/t). At low prices (<30 €/t), a +10 €/t change has no detectable effect on CO₂ per capita (cumulative 0–2y: 0.3%, SE=1.2%). In contrast, at high prices (≥30 €/t) the same +10 €/t change reduces CO₂ per capita by 1.9% over 0–2 years (SE=0.4%, 95% CI [−2.7, −1.1]). The differential is concentrated at t+2, consistent with adjustment frictions and compliance cycles. These results support a threshold effect: meaningful abatement occurs only when carbon prices enter a high-stringency range
+
+```{r}
+star <- function(est, se){
+  p <- 2*pnorm(abs(est/se), lower.tail=FALSE)
+  if (p < 0.001) return("***")
+  if (p < 0.01)  return("**")
+  if (p < 0.05)  return("*")
+  if (p < 0.1)   return("+")
+  ""
+}
+
+fmt_cell <- function(est, se, digits=3){
+  paste0(sprintf("%.", digits, "f", est), star(est, se), "\n(",
+         sprintf("%.", digits, "f", se), ")")
+}
+
+# Example with your numbers:
+low_txt  <- fmt_cell( 0.003, 0.012)  # should have no star
+high_txt <- fmt_cell(-0.019, 0.004)  # should show ***
+
+```
+
+
+
+Local projections (clean horizons) with threshold interaction 
+
+```{r}
+as_lp <- analysis_sample %>%
+  arrange(country, year) %>%
+  group_by(country) %>%
+  mutate(dcpi = cpi10 - lag(cpi10)) %>%
+  ungroup() %>%
+  mutate(high30 = cpi10 >= 3)
+
+run_lp_high <- function(h){
+  dat_h <- as_lp %>% group_by(country) %>% mutate(y_h = dplyr::lead(log_co2_pc, h)) %>% ungroup()
+  feols(y_h ~ dcpi*high30 + lgdppc_c + ind_c + ren_c | country + year,
+        data = dat_h, vcov = vcov_DK(~year, lag = 3))
+}
+mods_hp <- lapply(0:2, run_lp_high); names(mods_hp) <- paste0("h=",0:2)
+
+# add “Effect in High price (sum)” row at each horizon
+effect_sum_group <- function(mod, group_pat="high30TRUE"){
+  nm <- names(coef(mod)); b <- coef(mod); V <- vcov(mod)
+  base <- "dcpi"; inter <- paste0("dcpi:", group_pat)
+  est_b <- b[base]; se_b <- sqrt(V[base, base])
+  idx <- c(base, inter); L <- matrix(1, 1, length(idx))
+  est_h <- sum(b[idx]); se_h <- sqrt(drop(L %*% V[idx, idx, drop=FALSE] %*% t(L)))
+  list(high = sprintf("%.3f\n(%.3f)", est_h, se_h))
+}
+rows_hp <- lapply(mods_hp, effect_sum_group)
+
+add_rows_hp <- tibble::tibble(
+  term = "Effect in High price (ΔCPI + ΔCPI×High)",
+  !!!setNames(lapply(rows_hp, `[[`, "high"), names(mods_hp))
+)
+
+modelsummary(
+  mods_hp,
+  coef_map  = c("dcpi" = "ΔCPI (+10 €/t)", "dcpi:high30TRUE" = "ΔCPI × High price"),
+  coef_omit = "^(?!dcpi$|dcpi:high30TRUE$).*",
+  gof_omit  = "IC|Log|Adj|F$|Std|^FE",
+  statistic = "({std.error})",
+  stars     = TRUE,
+  add_rows  = add_rows_hp,
+  notes     = "High price: CPI ≥ 30 €/t. LP of y_{t+h} on ΔCPI_t with FE & controls; DK SEs (lag=3).",
+  output    = "table_lp_highprice.tex"
 )
 
 ```

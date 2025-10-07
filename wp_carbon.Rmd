@@ -35,7 +35,8 @@ library(broom)
 library(fixest)
 library(modelsummary)
 library(glue)
-
+library(plm)
+library(sandwich); library(lmtest)
 # Load the data
 
 # read the sheet called "final_sheet"
@@ -64,6 +65,7 @@ df_eu <- df %>%
 
 co2_eu <- co2 %>%
   filter(Name %in% eu_countries)
+
 
 
 # check
