@@ -530,7 +530,7 @@ etable(mods, headers = paste0("h=", 0:3), se.below = TRUE)
 
 This reproduces your main two specs with CPI at t, t-1, t-2, and adds a custom cumulative (t..t+2) row.
 
-```{r}
+```{r repetition of baseline}
 
 # helper: cumulative effect & SE for selected coefficients
 cum_wald <- function(mod, coefs) {
