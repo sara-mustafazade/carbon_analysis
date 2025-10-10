@@ -298,3 +298,263 @@ analysis_sample <- analysis_sample %>%
 
 # Analysis
 
+## RQ1
+
+```{r}
+# ----- RQ1: Per-capita (main), contemporaneous CPI -----
+m_rq1_pc <- feols(
+  log_co2_pc ~ cpi10 + lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  panel.id = ~ country + year,
+  vcov     = ~ country + year   # two-way clustered SE
+  # OR: vcov = vcovDK(time = ~ year, kernel = "Bartlett", bandwidth = 3)
+)
+
+# ----- RQ1 robustness: Totals (add log_pop), same within-controls -----
+m_rq1_tot <- feols(
+  log_co2 ~ cpi10 + log_pop + lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  panel.id = ~ country + year,
+  vcov     = ~ country + year   # or vcovDK(...) as above
+)
+
+etable(m_rq1_pc, m_rq1_tot, se.below = TRUE,
+       headers = c("Per-capita (main)", "Totals (robustness)"))
+
+```
+```{r}
+
+models_rq1 <- list(
+  "Per-capita (main)"      = m_rq1_pc,
+  "Per-capita + Trends"    = m_rq1_pc_trend,
+  "Totals (robustness)"    = m_rq1_tot,
+  "No Renewables"          = m_pc_noren
+)
+
+msummary(
+  models_rq1,
+  fmt = 3,
+  stars = c('*'=.05,'**'=.01,'***'=.001),
+  coef_map = c(
+    "cpi10"     = "CPI (+10 €/t)",
+    "lgdppc_c"  = "log GDP pc (within)",
+    "ind_c"     = "Industry share",
+    "ren_c"     = "Renewable share",
+    "log_pop"   = "log Population"
+  ),
+  gof_map = c("n","r.squared.within"),
+  notes = "Country and year fixed effects in all models. Standard errors clustered two-ways by country and year. Significance: * p < 0.05, ** p < 0.01, *** p < 0.001.",
+  output = "latex"
+)
+
+```
+The coefficients on CPI are negative in all models but not statistically significant, implying no immediate reduction in emissions from higher carbon pricing.
+
+Given the scaling (CPI = +10 €/t), even the largest point estimate (−0.007) implies only about 0.7 % lower per-capita emissions per +10 €/t, economically small and statistically uncertain.
+
+Renewable share is consistently large and negative (−1.1 to −1.7, p < 0.01), confirming that clean-energy expansion explains most of the contemporaneous decarbonization.
+
+Adding country-specific trends absorbs some of this variation but does not change the overall conclusion.
+
+```{r app: country trend}
+
+m_rq1_pc_trend <- feols(
+  log_co2_pc ~ cpi10 + lgdppc_c + ind_c + ren_c + i(country, year) | country + year,
+  data = analysis_sample, vcov = ~ country + year
+)
+etable(m_rq1_pc, m_rq1_pc_trend, se.below = TRUE,
+       headers = c("No trend", "Country-specific trends"))
+
+```
+```{r app: renewables}
+m_pc_noren <- feols(
+  log_co2_pc ~ cpi10 + lgdppc_c + ind_c | country + year,
+  data = analysis_sample, vcov = ~ country + year
+)
+etable(m_rq1_pc, m_pc_noren, headers = c("With renewables","No renewables"))
+
+```
+```{r app: high price}
+analysis_sample <- analysis_sample %>% mutate(high_price = as.integer(carbon_pricing_index >= 30))
+m_rq1_hp <- feols(
+  log_co2_pc ~ cpi10*high_price + lgdppc_c + ind_c + ren_c | country + year,
+  data = analysis_sample, vcov = ~ country + year
+)
+# Marginal effect at high prices:
+wald(m_rq1_hp, "cpi10 + cpi10:high_price = 0")
+
+```
+## RQ 2
+
+```{r}
+# --- RQ2: Dynamics of CPI (immediate vs lagged) ---
+
+# Short DL (0–2): contemporaneous + 1–2 year lags
+m_rq2_dl02 <- feols(
+  log_co2_pc ~ l(cpi10, 0:2) + lgdppc_c + ind_c + ren_c | country + year,
+  data      = analysis_sample,
+  panel.id  = ~ country + year,         # <-- REQUIRED for l()
+  vcov      = ~ country + year          # or: vcovDK(time = ~year, bandwidth = 3)
+)
+
+# Placebo leads to check pre-trends (should be ~0 if no anticipation)
+m_rq2_leads_lags <- feols(
+  log_co2_pc ~ f(cpi10, 1:2) + l(cpi10, 0:2) + lgdppc_c + ind_c + ren_c | country + year,
+  data      = analysis_sample,
+  panel.id  = ~ country + year,
+  vcov      = ~ country + year
+)
+
+# Cumulative (sum of 0–2 lags) Wald test
+wald(m_rq2_dl02, "l(cpi10,0) + l(cpi10,1) + l(cpi10,2) = 0")
+
+# Nicely formatted table
+etable(m_rq2_dl02, m_rq2_leads_lags, se.below = TRUE,
+       headers = c("DL(0–2)", "Leads(1–2) + DL(0–2)"))
+
+```
+
+```{r}
+models_rq2 <- list(
+  "Per-capita (main)"      = m_rq2_dl02,
+  "Per-capita + Trends"    = m_rq2_leads_lags
+)
+
+msummary(
+  models_rq1,
+  fmt = 3,
+  stars = c('*'=.05,'**'=.01,'***'=.001),
+  coef_map = c(
+    "cpi10"     = "CPI (+10 €/t)",
+    "lgdppc_c"  = "log GDP pc (within)",
+    "ind_c"     = "Industry share",
+    "ren_c"     = "Renewable share",
+    "log_pop"   = "log Population"
+  ),
+  gof_map = c("n","r.squared.within"),
+  notes = "Country and year fixed effects in all models. Standard errors clustered two-ways by country and year. Significance: * p < 0.05, ** p < 0.01, *** p < 0.001.",
+  output = "latex"
+)
+
+```
+
+```{r wald rq2}
+# Robust cumulative-effect test for lags 0:k (k >= 0)
+cum_wald_auto <- function(mod, var = "cpi10", lags = 0:2) {
+  nm <- names(coef(mod))
+  want <- character()
+
+  for (k in lags) {
+    if (k == 0) {
+      # contemporaneous is just the bare var name
+      cand <- var
+    } else {
+      # possible printed names: "l(cpi10,1)" or "l(cpi10, 1)"
+      cand <- c(sprintf("l(%s,%d)", var, k),
+                sprintf("l(%s, %d)", var, k))
+    }
+    hit <- cand[cand %in% nm]
+    if (length(hit) == 0) {
+      stop("Could not find coefficient for lag ", k,
+           ". Tried: ", paste(cand, collapse = " | "),
+           "\nAvailable names include e.g.: ", paste(head(nm, 10), collapse = ", "), " ...")
+    }
+    want <- c(want, hit[1])
+  }
+
+  b <- coef(mod)[want]
+  V <- vcov(mod)[want, want, drop = FALSE]
+  L <- matrix(1, nrow = 1, ncol = length(want))
+
+  est <- as.numeric(L %*% b)
+  se  <- sqrt(as.numeric(L %*% V %*% t(L)))
+  z   <- est / se
+  p   <- 2 * pnorm(abs(z), lower.tail = FALSE)
+  ci  <- est + c(-1, 1) * 1.96 * se
+  pct <- 100 * (exp(est) - 1)     # percent interpretation for log DV
+
+  list(est = est, se = se, z = z, p = p, ci = ci, pct = pct, terms = want)
+}
+
+# ---- Apply to your RQ2 models ----
+#rq2_sum     <- cum_wald_auto(m_rq2_dl02,        var = "cpi10", lags = 0:2)
+#rq2_sum_lds <- cum_wald_auto(m_rq2_leads_lags,  var = "cpi10", lags = 0:2)
+
+#rq2_sum
+#rq2_sum_lds
+# see below for table of these results
+
+```
+```{r}
+# cumulative test (from your helper)
+cw_dl   <- cum_wald_auto(m_rq2_dl02, var = "cpi10", lags = 0:2)
+cw_lead <- cum_wald_auto(m_rq2_leads_lags, var = "cpi10", lags = 0:2)
+
+# create a small data frame to add as a custom note line
+cum_line <- data.frame(
+  Variable = "Cumulative CPI (0–2y)",
+  `DL(0–2)`           = sprintf("%.3f (%.3f)", cw_dl$est, cw_dl$se),
+  `Leads+DL(0–2)`     = sprintf("%.3f (%.3f)", cw_lead$est, cw_lead$se)
+)
+
+# show main etable and append manually below
+etable(m_rq2_dl02, m_rq2_leads_lags,
+       headers = c("DL(0–2)", "Leads(1–2)+DL(0–2)"),
+       se.below = TRUE)
+
+print(cum_line, row.names = FALSE)
+
+yes#etable with gof line
+
+
+```
+
+
+RQ2 (timing). Distributed-lag estimates over t,t−1,t−2 indicate that the contemporaneous CPI effect is close to zero, while the t−1 coefficient is negative and statistically significant (−0.015, p<0.05); the t−2 coefficient is small and imprecise. Placebo leads are insignificant, suggesting no pre-trends. The cumulative 0–2-year effect of a +10 €/t increase is about −1.0% (DL(0–2): −0.0103, SE 0.0205, p=0.615; Leads+DL: −0.0096, SE 0.0197, p=0.628). These patterns imply that most of the policy impact materializes with a one-year delay, consistent with investment and adoption cycles, while the multi-year average over two years is modest and imprecisely estimated.
+
+```{r}
+# Coefficient plot focusing on CPI terms
+coefplot(
+  m_rq2_leads_lags,
+  keep = c("f\\(cpi10,1\\)","f\\(cpi10,2\\)","cpi10","l\\(cpi10,1\\)","l\\(cpi10,2\\)"),
+  main = "Dynamic effects of CPI (+10 €/t) on log CO2 per capita",
+  xlab = "Semi-elasticity",
+  dict = c(
+    "f(cpi10,1)" = "Lead 1",
+    "f(cpi10,2)" = "Lead 2",
+    "cpi10"      = "t",
+    "l(cpi10,1)" = "t−1",
+    "l(cpi10,2)" = "t−2"
+  )
+)
+
+
+```
+## RQ 3 
+
+```{r}
+# --- Construct HighCarbon indicator (pre-2004–2006 baseline) ---
+baseline_intensity <- analysis_sample %>%
+  filter(year %in% 2004:2006) %>%
+  group_by(country) %>%
+  summarise(emis_int_base = mean(emis_int, na.rm = TRUE), .groups = "drop") %>%
+  mutate(HighCarbon = ifelse(emis_int_base > median(emis_int_base, na.rm = TRUE), 1, 0))
+
+df_rq3 <- analysis_sample %>%
+  left_join(baseline_intensity, by = "country")
+
+# --- Heterogeneity regression ---
+m_rq3 <- feols(
+  log_co2_pc ~ cpi10 * HighCarbon + lgdppc_c + ind_c + ren_c | country + year,
+  data = df_rq3, vcov = ~ country + year
+)
+
+etable(m_rq3, se.below = TRUE, headers = "H3: High vs. Low Carbon Intensity")
+
+```
+
+```{r}
+wald(m_rq3, "cpi10 + cpi10:HighCarbon = 0")  # total effect for high-intensity countries
+
+```
+

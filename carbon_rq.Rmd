@@ -242,7 +242,7 @@ etable(m_main, m_robust, se.below = TRUE,
        headers = c("Per-capita (main)","Totals (robustness)"))
 ```
 
-Two-way FE with Driscoll–Kraay SEs shows no contemporaneous CPI effect, but a one-year-lagged reduction of ~1.5% (per-capita) and ~2.1% (totals) per +10 €/t increase in the carbon price. The 2-year lag is small and insignificant, consistent with adjustment occurring within roughly a year. We’re stacking level lags of a highly persistent policy (CPI), so the t+1 effect shows the first round of adjustment, while t+2 gets diluted by (i) multicollinearity with newer CPI levels, (ii) front-loaded abatement, and (iii) annual measurement/budget cycles.
+Two-way FE with Driscoll–Kraay SEs shows no contemporaneous CPI effect, but a one-year-lagged reduction of ~1.5% (per-capita) and ~2.1% (totals) c. The 2-year lag is small and insignificant, consistent with adjustment occurring within roughly a year. We’re stacking level lags of a highly persistent policy (CPI), so the t+1 effect shows the first round of adjustment, while t+2 gets diluted by (i) multicollinearity with newer CPI levels, (ii) front-loaded abatement, and (iii) annual measurement/budget cycles.
 
 ```{r}
 # Formally testing cumulative effect over 0-2 years

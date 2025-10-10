@@ -401,7 +401,7 @@ What Each Transformation Does
 
 ```{r}
 # Quick data summary and save
-#skimr::skim(analysis_sample)
+#
 #write_csv(analysis_sample, "analysis_sample.csv")
 
 # Select only the numeric variables for the correlation matrix
