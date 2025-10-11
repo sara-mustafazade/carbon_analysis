@@ -301,21 +301,21 @@ analysis_sample <- analysis_sample %>%
 ## RQ1
 
 ```{r}
-# ----- RQ1: Per-capita (main), contemporaneous CPI -----
 m_rq1_pc <- feols(
-  log_co2_pc ~ cpi10 + lgdppc_c + ind_c + ren_c | country + year,
-  data     = analysis_sample,
-  panel.id = ~ country + year,
-  vcov     = ~ country + year   # two-way clustered SE
-  # OR: vcov = vcovDK(time = ~ year, kernel = "Bartlett", bandwidth = 3)
+log_co2_pc ~ cpi10 + lgdppc_c + ind_c + ren_c | country + year,
+data= analysis_sample,
+panel.id = ~ country + year,
+vcov= ~ country + year # two-way clustered SE
+#vcov = vcovDK(time = ~ year, kernel = "Bartlett", bandwidth = 3)
 )
 
 # ----- RQ1 robustness: Totals (add log_pop), same within-controls -----
 m_rq1_tot <- feols(
-  log_co2 ~ cpi10 + log_pop + lgdppc_c + ind_c + ren_c | country + year,
-  data     = analysis_sample,
-  panel.id = ~ country + year,
-  vcov     = ~ country + year   # or vcovDK(...) as above
+log_co2 ~ cpi10 + log_pop + lgdppc_c + ind_c + ren_c | country + year,
+data = analysis_sample,
+panel.id = ~ country + year,
+vcov = ~ country + year,
+# vcov = vcovDK(time = ~ year, kernel = "Bartlett", bandwidth = 3)
 )
 
 etable(m_rq1_pc, m_rq1_tot, se.below = TRUE,
@@ -344,7 +344,7 @@ msummary(
   ),
   gof_map = c("n","r.squared.within"),
   notes = "Country and year fixed effects in all models. Standard errors clustered two-ways by country and year. Significance: * p < 0.05, ** p < 0.01, *** p < 0.001.",
-  output = "latex"
+  output = "html"
 )
 
 ```
@@ -381,7 +381,8 @@ m_rq1_hp <- feols(
   data = analysis_sample, vcov = ~ country + year
 )
 # Marginal effect at high prices:
-wald(m_rq1_hp, "cpi10 + cpi10:high_price = 0")
+etable(m_rq1_pc, m_rq1_hp, se.below = TRUE,
+       headers = c("All prices","With high-price interaction"))
 
 ```
 ## RQ 2
@@ -406,7 +407,7 @@ m_rq2_leads_lags <- feols(
 )
 
 # Cumulative (sum of 0–2 lags) Wald test
-wald(m_rq2_dl02, "l(cpi10,0) + l(cpi10,1) + l(cpi10,2) = 0")
+#wald(m_rq2_dl02, "l(cpi10,0) + l(cpi10,1) + l(cpi10,2) = 0")
 
 # Nicely formatted table
 etable(m_rq2_dl02, m_rq2_leads_lags, se.below = TRUE,
@@ -421,19 +422,19 @@ models_rq2 <- list(
 )
 
 msummary(
-  models_rq1,
+  models_rq2,
   fmt = 3,
   stars = c('*'=.05,'**'=.01,'***'=.001),
-  coef_map = c(
-    "cpi10"     = "CPI (+10 €/t)",
-    "lgdppc_c"  = "log GDP pc (within)",
-    "ind_c"     = "Industry share",
-    "ren_c"     = "Renewable share",
-    "log_pop"   = "log Population"
-  ),
-  gof_map = c("n","r.squared.within"),
-  notes = "Country and year fixed effects in all models. Standard errors clustered two-ways by country and year. Significance: * p < 0.05, ** p < 0.01, *** p < 0.001.",
-  output = "latex"
+  # #coef_map = c(
+  #   "cpi10"     = "CPI (+10 €/t)",
+  #   "lgdppc_c"  = "log GDP pc (within)",
+  #   "ind_c"     = "Industry share",
+  #   "ren_c"     = "Renewable share",
+  #   "log_pop"   = "log Population"
+  # ),
+  # gof_map = c("n","r.squared.within"),
+  notes = "Dynamics of CPI (immediate vs lagged). Country and year fixed effects in all models. Standard errors clustered two-ways by country and year. Significance: * p < 0.05, ** p < 0.01, *** p < 0.001.",
+  output = "html"
 )
 
 ```
@@ -485,7 +486,7 @@ cum_wald_auto <- function(mod, var = "cpi10", lags = 0:2) {
 # see below for table of these results
 
 ```
-```{r}
+```{r rq2 table}
 # cumulative test (from your helper)
 cw_dl   <- cum_wald_auto(m_rq2_dl02, var = "cpi10", lags = 0:2)
 cw_lead <- cum_wald_auto(m_rq2_leads_lags, var = "cpi10", lags = 0:2)
@@ -503,8 +504,6 @@ etable(m_rq2_dl02, m_rq2_leads_lags,
        se.below = TRUE)
 
 print(cum_line, row.names = FALSE)
-
-yes#etable with gof line
 
 
 ```
@@ -777,14 +776,480 @@ res_diff_tot
 etable(
   m_rq3_dyn_tot,
   se.below = TRUE,
-  headers = "RQ3 (Totals): Dynamic heterogeneity (0–2y)",
-  gof = list(
+  headers = "RQ3 (Totals): Dynamic heterogeneity (0–2y)"
+  
+)
+gof = list(
     "Cumulative (Low, 0–2y)"  = sprintf("%.4f (%.4f), p=%.3f", res_low_tot$est,  res_low_tot$se,  res_low_tot$p),
     "Cumulative (High, 0–2y)" = sprintf("%.4f (%.4f), p=%.3f", res_high_tot$est, res_high_tot$se, res_high_tot$p),
     "Diff High−Low (0–2y)"    = sprintf("%.4f (%.4f), p=%.3f", res_diff_tot$est, res_diff_tot$se, res_diff_tot$p)
   )
+
+```
+```{r}
+
+# --------------------------
+# 0) (Optional) DK vcov (Driscoll–Kraay)
+# --------------------------
+# Use this if you want DK SEs instead of two-way cluster.
+vDK <- function(x) vcovSCC(x, time = ~ year, kernel = "Bartlett", maxlag = 3)
+
+# --------------------------
+# 1) Helpers to robustly find names & compute linear combos
+# --------------------------
+.find_one <- function(nm, candidates){
+  hit <- candidates[candidates %in% nm]
+  if (!length(hit)) NA_character_ else hit[1]
+}
+
+# Collect coefficient names for dynamic heterogeneity: base + lags, and their interactions
+get_terms_dynhet <- function(nm, var = "cpi10", lags = 0:2, int = "HighCarbon"){
+  low <- high <- character(0)
+  for (k in lags) {
+    if (k == 0) {
+      base   <- .find_one(nm, var)
+      inter  <- .find_one(nm, c(sprintf("%s:%s", var, int), sprintf("%s:%s", int, var)))
+    } else {
+      # handle both l(cpi10,1) and l(cpi10, 1) (with a space)
+      lag_cands <- c(sprintf("l(%s,%d)", var, k), sprintf("l(%s, %d)", var, k))
+      base      <- .find_one(nm, lag_cands)
+
+      int_cands <- c(sprintf("l(%s,%d):%s", var, k, int),
+                     sprintf("l(%s, %d):%s", var, k, int),
+                     sprintf("%s:l(%s,%d)", int, var, k),
+                     sprintf("%s:l(%s, %d)", int, var, k))
+      inter     <- .find_one(nm, int_cands)
+    }
+    low  <- c(low,  base)
+    high <- c(high, inter)
+  }
+  list(low = low, high = high)
+}
+
+# Compute sum(beta_terms) with SE using chosen vcov
+lincombo_sum <- function(mod, terms, vcov_arg = NULL){
+  nm <- names(coef(mod))
+  if (anyNA(terms)) {
+    stop("Missing terms at positions: ", paste(which(is.na(terms)), collapse = ", "),
+         "\nCheck names(coef(model)) to see how your lags/interactions are labeled.")
+  }
+  b  <- coef(mod)[terms]
+  V  <- if (is.null(vcov_arg)) vcov(mod) else vcov(mod, vcov = vcov_arg)
+  V  <- V[terms, terms, drop = FALSE]
+  w  <- rep(1, length(terms))
+  est <- sum(b)
+  se  <- as.numeric(sqrt(t(w) %*% V %*% w))  # = sqrt(sum(V)) since w=1s
+  z   <- est / se
+  p   <- 2 * pnorm(abs(z), lower.tail = FALSE)
+  ci  <- est + c(-1, 1) * 1.96 * se
+  list(est = est, se = se, z = z, p = p, ci = ci, terms = terms)
+}
+
+# Wrapper to compute Low / High / Diff cumulative (0–2y)
+cum_effects_0_2 <- function(mod, var = "cpi10", lags = 0:2, int = "HighCarbon", vcov_arg = NULL){
+  nm   <- names(coef(mod))
+  tt   <- get_terms_dynhet(nm, var = var, lags = lags, int = int)
+  low  <- lincombo_sum(mod, tt$low, vcov_arg = vcov_arg)
+  high <- lincombo_sum(mod, c(tt$low, tt$high), vcov_arg = vcov_arg)
+  diff <- lincombo_sum(mod, tt$high, vcov_arg = vcov_arg)
+  # return a neat data.frame
+  tibble::tibble(
+    group = c("Low (0–2y)", "High (0–2y)", "High − Low (0–2y)"),
+    est   = c(low$est, high$est, diff$est),
+    se    = c(low$se,  high$se,  diff$se),
+    z     = c(low$z,   high$z,   diff$z),
+    p     = c(low$p,   high$p,   diff$p),
+    ci_lo = c(low$ci[1], high$ci[1], diff$ci[1]),
+    ci_hi = c(low$ci[2], high$ci[2], diff$ci[2])
+  )
+}
+
+# --------------------------
+# 2) Fit BOTH models (PC and TOT) with lags interacted
+# --------------------------
+# Make sure HighCarbon is 0/1 numeric and data sorted
+df_rq3 <- df_rq3 %>%
+  mutate(HighCarbon = as.integer(HighCarbon)) %>%
+  arrange(country, year)
+
+# Per-capita
+m_rq3_dyn_pc <- feols(
+  log_co2_pc ~ cpi10*HighCarbon + l(cpi10,1)*HighCarbon + l(cpi10,2)*HighCarbon +
+    lgdppc_c + ind_c + ren_c | country + year,
+  data     = df_rq3,
+  panel.id = ~ country + year,
+  vcov     = ~ country + year  # keep two-way cluster here; DK via cum_effects_0_2 if desired
+)
+
+# Totals (adds population)
+m_rq3_dyn_tot <- feols(
+  log_co2 ~ cpi10*HighCarbon + l(cpi10,1)*HighCarbon + l(cpi10,2)*HighCarbon +
+    log_pop + lgdppc_c + ind_c + ren_c | country + year,
+  data     = df_rq3,
+  panel.id = ~ country + year,
+  vcov     = ~ country + year
+)
+
+# --------------------------
+# 3) Cumulative (0–2y) effects using lincombo_sum for BOTH models
+# --------------------------
+# Use two-way cluster SEs (as estimated) -> vcov_arg = NULL
+res_pc_tw  <- cum_effects_0_2(m_rq3_dyn_pc, var = "cpi10", lags = 0:2, int = "HighCarbon", vcov_arg = NULL)
+res_tot_tw <- cum_effects_0_2(m_rq3_dyn_tot, var = "cpi10", lags = 0:2, int = "HighCarbon", vcov_arg = NULL)
+
+# If you prefer DK SEs instead, pass vcov_arg = vDK:
+# res_pc_dk  <- cum_effects_0_2(m_rq3_dyn_pc,  vcov_arg = vDK)
+# res_tot_dk <- cum_effects_0_2(m_rq3_dyn_tot, vcov_arg = vDK)
+
+print(res_pc_tw)
+print(res_tot_tw)
+
+# --------------------------
+# 4) (Optional) Show models with etable, keep SEs below
+# --------------------------
+etable(
+  m_rq3_dyn_pc, m_rq3_dyn_tot,
+  se.below = TRUE,
+  headers  = c("RQ3 Dynamic (Per-capita)", "RQ3 Dynamic (Totals + log_pop)")
 )
 
 ```
 
-here is my change
+```{r}
+# Packages
+library(modelsummary)
+library(dplyr)
+library(stringr)
+library(tibble)
+
+# -------- Helper: nicely format "est (se)" ----------
+fmt_es <- function(est, se, digits = 4) {
+  sprintf(paste0("%.", digits, "f (%.", digits, "f)"), est, se)
+}
+
+# -------- Build the extra rows for cumulative effects ----------
+row_lab_pc  <- "RQ3 Dynamic (Per-capita)"
+row_lab_tot <- "RQ3 Dynamic (Totals + log_pop)"
+
+add_rows_tbl <- tibble::tibble(
+  term                         = c(" ", "Cumulative (0–2y): Low", "Cumulative (0–2y): High", "Cumulative (0–2y): High − Low"),
+  `RQ3 Dynamic (Per-capita)`   = c("", fmt_es(res_pc_tw$est[res_pc_tw$group=="Low (0–2y)"],
+                                              res_pc_tw$se [res_pc_tw$group=="Low (0–2y)"]),
+                                   fmt_es(res_pc_tw$est[res_pc_tw$group=="High (0–2y)"],
+                                              res_pc_tw$se [res_pc_tw$group=="High (0–2y)"]),
+                                   fmt_es(res_pc_tw$est[res_pc_tw$group=="High − Low (0–2y)"],
+                                              res_pc_tw$se [res_pc_tw$group=="High − Low (0–2y)"])
+  ),
+  `RQ3 Dynamic (Totals + log_pop)` = c("", fmt_es(res_tot_tw$est[res_tot_tw$group=="Low (0–2y)"],
+                                                  res_tot_tw$se [res_tot_tw$group=="Low (0–2y)"]),
+                                       fmt_es(res_tot_tw$est[res_tot_tw$group=="High (0–2y)"],
+                                                  res_tot_tw$se [res_tot_tw$group=="High (0–2y)"]),
+                                       fmt_es(res_tot_tw$est[res_tot_tw$group=="High − Low (0–2y)"],
+                                                  res_tot_tw$se [res_tot_tw$group=="High − Low (0–2y)"])
+  )
+)
+
+# --------- Optional: clean coefficient labels (auto-maps whatever names you have) ----------
+nm_pc  <- names(coef(m_rq3_dyn_pc))
+nm_tot <- names(coef(m_rq3_dyn_tot))
+nm_all <- unique(c(nm_pc, nm_tot))
+
+# Create a mapping that prints nice labels if it recognizes common patterns
+pretty_map <- setNames(nm_all, nm_all)
+pretty_map[grepl("^cpi10$", nm_all)]                    <- "CPI (t) / +10 €/t"
+pretty_map[grepl("^l\\(cpi10,\\s*1\\)$", nm_all)]       <- "CPI (t−1)"
+pretty_map[grepl("^l\\(cpi10,\\s*2\\)$", nm_all)]       <- "CPI (t−2)"
+pretty_map[grepl("^cpi10:HighCarbon", nm_all)]          <- "× HighCarbon"
+pretty_map[grepl("^HighCarbon:cpi10", nm_all)]          <- "× HighCarbon"
+pretty_map[grepl("^l\\(cpi10,\\s*1\\):HighCarbon", nm_all)] <- "CPI (t−1) × HighCarbon"
+pretty_map[grepl("^HighCarbon:l\\(cpi10,\\s*1\\)", nm_all)] <- "CPI (t−1) × HighCarbon"
+pretty_map[grepl("^l\\(cpi10,\\s*2\\):HighCarbon", nm_all)] <- "CPI (t−2) × HighCarbon"
+pretty_map[grepl("^HighCarbon:l\\(cpi10,\\s*2\\)", nm_all)] <- "CPI (t−2) × HighCarbon"
+
+pretty_map[grepl("^lgdppc_c$", nm_all)] <- "log GDP pc (centered)"
+pretty_map[grepl("^ind_c$", nm_all)]    <- "Industry share (centered)"
+pretty_map[grepl("^ren_c$", nm_all)]    <- "Renewables (centered)"
+pretty_map[grepl("^log_pop$", nm_all)]  <- "log Population"
+
+# --------- Produce LaTeX table ----------
+msummary(
+  list(`RQ3 Dynamic (Per-capita)` = m_rq3_dyn_pc,
+       `RQ3 Dynamic (Totals + log_pop)` = m_rq3_dyn_tot),
+  output   = "latex",
+  stars    = c('*' = .05, '**' = .01, '***' = .001),
+  coef_map = pretty_map,
+  gof_omit = 'IC|Log.Lik|Adj|AIC|BIC|RMSE',      # keep table tight
+  add_rows = add_rows_tbl,
+  notes = c(
+    "+1 in CPI regressor = +10 €/t.",
+    "Country & year FE in all models.",
+    "SEs: two-way clustered by country & year; cumulative rows show est (SE)."
+  ),
+  title = "RQ3: Dynamic heterogeneity (0–2 years) across High/Low carbon-intensity countries"
+)
+
+```
+
+```{r}
+library(kableExtra)
+
+cum_tab <- dplyr::tibble(
+  `Cumulative (0–2y)` = c("Low", "High", "High − Low"),
+  `Per-capita`        = c(fmt_es(res_pc_tw$est[1],  res_pc_tw$se[1]),
+                          fmt_es(res_pc_tw$est[2],  res_pc_tw$se[2]),
+                          fmt_es(res_pc_tw$est[3],  res_pc_tw$se[3])),
+  `Totals + log_pop`  = c(fmt_es(res_tot_tw$est[1], res_tot_tw$se[1]),
+                          fmt_es(res_tot_tw$est[2], res_tot_tw$se[2]),
+                          fmt_es(res_tot_tw$est[3], res_tot_tw$se[3]))
+)
+
+kbl(cum_tab, format = "html", booktabs = TRUE, align = "lcc",
+    caption = "RQ3: Cumulative CPI effects (0–2y) by carbon-intensity group") |>
+  kable_classic(full_width = FALSE, html_font = NULL) |>
+  add_header_above(c(" " = 1, "Models" = 2)) |>
+  footnote(
+    general = "+1 in CPI regressor = +10 €/t. Country & year FE. SEs in parentheses.",
+    threeparttable = TRUE
+  )
+
+```
+
+
+## RQ 4
+
+```{r}
+library(dplyr)
+library(fixest)
+library(modelsummary)
+library(kableExtra)
+library(tibble)
+
+# =========================================================
+# 0) Construct HighIncome (pre-period 2004–2006)
+#    Use an UN-centered GDPpc log variable (e.g., "lgdppc").
+# =========================================================
+income_var <- "lgdppc_c"   # <-- change if yours is named differently
+
+baseline_income <- analysis_sample %>%
+  filter(year %in% 2004:2006) %>%
+  group_by(country) %>%
+  summarise(lgdppc_base = mean(.data[[income_var]], na.rm = TRUE), .groups = "drop") %>%
+  mutate(HighIncome = ifelse(lgdppc_base > median(lgdppc_base, na.rm = TRUE), 1L, 0L))
+
+df_rq4 <- analysis_sample %>%
+  left_join(baseline_income, by = "country") %>%
+  mutate(HighIncome = as.integer(HighIncome)) %>%
+  arrange(country, year)
+
+# =========================================================
+# 1) DIRECT EFFECT (no lags), per-capita
+# =========================================================
+m_rq4_direct_pc <- feols(
+  log_co2_pc ~ cpi10 * HighIncome + lgdppc_c + ind_c + ren_c | country + year,
+  data = df_rq4,
+  vcov = ~ country + year
+)
+
+# Optional: direct effect robustness on totals (adds population)
+m_rq4_direct_tot <- feols(
+  log_co2 ~ cpi10 * HighIncome + log_pop + lgdppc_c + ind_c + ren_c | country + year,
+  data = df_rq4,
+  vcov = ~ country + year
+)
+
+etable(m_rq4_direct_pc, m_rq4_direct_tot, se.below = TRUE,
+       headers = c("RQ4 Direct: Per-capita", "RQ4 Direct: Totals + log_pop"))
+
+# =========================================================
+# 2) DYNAMIC EFFECT (lags up to 2), per-capita
+# =========================================================
+m_rq4_dyn_pc <- feols(
+  log_co2_pc ~ cpi10*HighIncome + l(cpi10,1)*HighIncome + l(cpi10,2)*HighIncome +
+    lgdppc_c + ind_c + ren_c | country + year,
+  data     = df_rq4,
+  panel.id = ~ country + year,
+  vcov     = ~ country + year
+)
+
+# 3) DYNAMIC EFFECT robustness on totals
+m_rq4_dyn_tot <- feols(
+  log_co2 ~ cpi10*HighIncome + l(cpi10,1)*HighIncome + l(cpi10,2)*HighIncome +
+    log_pop + lgdppc_c + ind_c + ren_c | country + year,
+  data     = df_rq4,
+  panel.id = ~ country + year,
+  vcov     = ~ country + year
+)
+
+etable(m_rq4_dyn_pc, m_rq4_dyn_tot, se.below = TRUE,
+       headers = c("RQ4 Dynamic: Per-capita", "RQ4 Dynamic: Totals + log_pop"))
+
+# =========================================================
+# 4) CUMULATIVE (0–2y) EFFECTS — helper functions (no wald())
+# =========================================================
+.find_one <- function(nm, candidates){
+  hit <- candidates[candidates %in% nm]
+  if (!length(hit)) NA_character_ else hit[1]
+}
+
+get_terms_dynhet <- function(nm, var = "cpi10", lags = 0:2, int = "HighIncome"){
+  low <- high <- character(0)
+  for (k in lags) {
+    if (k == 0) {
+      base  <- .find_one(nm, var)
+      inter <- .find_one(nm, c(sprintf("%s:%s", var, int), sprintf("%s:%s", int, var)))
+    } else {
+      lag_cands <- c(sprintf("l(%s,%d)", var, k), sprintf("l(%s, %d)", var, k))
+      base      <- .find_one(nm, lag_cands)
+      int_cands <- c(sprintf("l(%s,%d):%s", var, k, int), sprintf("l(%s, %d):%s", var, k, int),
+                     sprintf("%s:l(%s,%d)", int, var, k), sprintf("%s:l(%s, %d)", int, var, k))
+      inter     <- .find_one(nm, int_cands)
+    }
+    low  <- c(low,  base)
+    high <- c(high, inter)
+  }
+  list(low = low, high = high)
+}
+
+lincombo_sum <- function(mod, terms, vcov_arg = NULL){
+  nm <- names(coef(mod))
+  if (anyNA(terms)) stop("Missing terms: ", paste(which(is.na(terms)), collapse = ", "),
+                         "\nCheck names(coef(model)).")
+  b <- coef(mod)[terms]
+  V <- if (is.null(vcov_arg)) vcov(mod) else vcov(mod, vcov = vcov_arg)
+  V <- V[terms, terms, drop = FALSE]
+  w <- rep(1, length(terms))
+  est <- sum(b)
+  se  <- as.numeric(sqrt(t(w) %*% V %*% w))
+  z   <- est / se
+  p   <- 2 * pnorm(abs(z), lower.tail = FALSE)
+  ci  <- est + c(-1, 1) * 1.96 * se
+  list(est = est, se = se, z = z, p = p, ci = ci, terms = terms)
+}
+
+cum_effects_0_2 <- function(mod, var = "cpi10", lags = 0:2, int = "HighIncome", vcov_arg = NULL){
+  nm <- names(coef(mod))
+  tt <- get_terms_dynhet(nm, var = var, lags = lags, int = int)
+  low  <- lincombo_sum(mod, tt$low, vcov_arg = vcov_arg)
+  high <- lincombo_sum(mod, c(tt$low, tt$high), vcov_arg = vcov_arg)
+  diff <- lincombo_sum(mod, tt$high, vcov_arg = vcov_arg)
+  tibble(
+    group = c("Low (0–2y)", "High (0–2y)", "High − Low (0–2y)"),
+    est   = c(low$est, high$est, diff$est),
+    se    = c(low$se,  high$se,  diff$se),
+    z     = c(low$z,   high$z,   diff$z),
+    p     = c(low$p,   high$p,   diff$p),
+    ci_lo = c(low$ci[1], high$ci[1], diff$ci[1]),
+    ci_hi = c(low$ci[2], high$ci[2], diff$ci[2])
+  )
+}
+
+# Compute cumulative effects (two-way clustered SEs from the models)
+res_rq4_pc  <- cum_effects_0_2(m_rq4_dyn_pc,  var = "cpi10", int = "HighIncome")
+res_rq4_tot <- cum_effects_0_2(m_rq4_dyn_tot, var = "cpi10", int = "HighIncome")
+
+res_rq4_pc
+res_rq4_tot
+
+```
+
+```{r app RQ4}
+fmt_es <- function(est, se, digits = 4) sprintf(paste0("%.",digits,"f (%.",digits,"f)"), est, se)
+
+cum_tab_rq4 <- tibble(
+  `Cumulative (0–2y)` = c("Low", "High", "High − Low"),
+  `Per-capita`        = c(fmt_es(res_rq4_pc$est[1],  res_rq4_pc$se[1]),
+                          fmt_es(res_rq4_pc$est[2],  res_rq4_pc$se[2]),
+                          fmt_es(res_rq4_pc$est[3],  res_rq4_pc$se[3])),
+  `Totals + log_pop`  = c(fmt_es(res_rq4_tot$est[1], res_rq4_tot$se[1]),
+                          fmt_es(res_rq4_tot$est[2], res_rq4_tot$se[2]),
+                          fmt_es(res_rq4_tot$est[3], res_rq4_tot$se[3]))
+)
+
+kbl(cum_tab_rq4, format = "html", booktabs = TRUE, align = "lcc",
+    caption = "RQ4: Cumulative CPI effects (0–2y) by income group") |>
+  kable_classic(full_width = FALSE) |>
+  add_header_above(c(" " = 1, "Models" = 2)) |>
+  footnote(
+    general = "+1 in CPI regressor = +10 €/t. Country & year FE. SEs: two-way clustered by country & year. Values are estimates with SE in parentheses.",
+    threeparttable = TRUE
+  )
+
+```
+Direct effect: per-capita (main) + totals (robustness)
+
+```{r}
+library(modelsummary)
+library(tibble)
+library(stringr)
+
+# Pretty labels for key regressors
+pretty_map <- c(
+  "cpi10"                              = "CPI (t) / +10 €/t",
+  "HighIncome"                         = "HighIncome (baseline absorbed)", # FE absorbs its main effect
+  "cpi10:HighIncome"                   = "CPI (t) × HighIncome",
+  "lgdppc_c"                           = "log GDP pc (centered)",
+  "ind_c"                              = "Industry share (centered)",
+  "ren_c"                              = "Renewables (centered)",
+  "log_pop"                            = "log Population"
+)
+
+# Show clean GOF; hide IC etc.
+gof_omit <- "IC|Log.Lik|Adj|AIC|BIC|RMSE"
+
+# Build LaTeX table
+dir.create("tables", showWarnings = FALSE)
+
+msummary(
+  list(
+    "RQ4 Direct: Per-capita (main)"    = m_rq4_direct_pc,
+    "RQ4 Direct: Totals + log_pop"     = m_rq4_direct_tot
+  ),
+  output   = "tables/rq4_direct_main.tex",
+  stars    = c('*' = .05, '**' = .01, '***' = .001),
+  statistic = "({std.error})",
+  coef_map = pretty_map,
+  gof_omit = gof_omit,
+  notes = c(
+    "Country & year fixed effects in all models.",
+    "Standard errors two-way clustered by country and year.",
+    "+1 in CPI regressor = +10 €/t."
+  ),
+  title = "RQ4 — Income Heterogeneity: Direct Effect (Per-capita main; Totals robustness)"
+)
+
+```
+
+Dynamic effect (lags up to 2): per-capita (main) + totals (robustness)  
+```{r}
+# Extend pretty labels for lagged terms
+pretty_map_dyn <- c(pretty_map,
+  "l(cpi10,1)"                         = "CPI (t−1)",
+  "l(cpi10,2)"                         = "CPI (t−2)",
+  # Interactions (order can vary; map both directions defensively)
+  "l(cpi10,1):HighIncome"              = "CPI (t−1) × HighIncome",
+  "HighIncome:l(cpi10,1)"              = "CPI (t−1) × HighIncome",
+  "l(cpi10,2):HighIncome"              = "CPI (t−2) × HighIncome",
+  "HighIncome:l(cpi10,2)"              = "CPI (t−2) × HighIncome"
+)
+
+msummary(
+  list(
+    "RQ4 Dynamic: Per-capita (main)"   = m_rq4_dyn_pc,
+    "RQ4 Dynamic: Totals + log_pop"    = m_rq4_dyn_tot
+  ),
+  output   = "tables/rq4_dynamic_main.tex",
+  stars    = c('*' = .05, '**' = .01, '***' = .001),
+  statistic = "({std.error})",
+  coef_map = pretty_map_dyn,
+  gof_omit = gof_omit,
+  notes = c(
+    "Country & year fixed effects in all models.",
+    "Standard errors two-way clustered by country and year.",
+    "Dynamic specs include CPI(t), CPI(t−1), CPI(t−2) interacted with HighIncome.",
+    "+1 in CPI regressor = +10 €/t."
+  ),
+  title = "RQ4 — Income Heterogeneity: Dynamic Effects (Per-capita main; Totals robustness)"
+)
+
+```
+
