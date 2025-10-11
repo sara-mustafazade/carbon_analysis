@@ -554,7 +554,237 @@ etable(m_rq3, se.below = TRUE, headers = "H3: High vs. Low Carbon Intensity")
 ```
 
 ```{r}
-wald(m_rq3, "cpi10 + cpi10:HighCarbon = 0")  # total effect for high-intensity countries
+# Effects and tests
+# High group total effect = cpi10 + cpi10:HighCarbon
+wald(m_rq3, "cpi10 + cpi10:HighCarbon = 0")   # high group
+wald(m_rq3, "cpi10 = 0")                      # low group
+wald(m_rq3, "cpi10:HighCarbon = 0")           # difference
+
+```
+Test dynamic heterogeneity (this is the one likely to confirm H3)
+```{r}
+# Dynamic heterogeneity: interact lags with HighCarbon
+m_rq3_dyn <- feols(
+  log_co2_pc ~ cpi10*HighCarbon + l(cpi10,1)*HighCarbon + l(cpi10,2)*HighCarbon +
+               lgdppc_c + ind_c + ren_c | country + year,
+  data = df_rq3,
+  panel.id = ~ country + year,
+  vcov = ~ country + year
+)
+
+# Cumulative (0–2y) effects by group:
+# low group: sum of cpi10 + l(cpi10,1) + l(cpi10,2)
+wald(m_rq3_dyn, "cpi10 + l(cpi10,1) + l(cpi10,2) = 0")
+
+# high group: add the three interactions
+wald(m_rq3_dyn, paste(
+  "cpi10 + l(cpi10,1) + l(cpi10,2) +",
+  "cpi10:HighCarbon + l(cpi10,1):HighCarbon + l(cpi10,2):HighCarbon = 0"
+))
+
+# difference in cumulative effects (High − Low)
+wald(m_rq3_dyn, paste(
+  "cpi10:HighCarbon + l(cpi10,1):HighCarbon + l(cpi10,2):HighCarbon = 0"
+))
+etable(m_rq3_dyn, se.below = TRUE,
+       headers = "H3 Dynamic: High vs. Low Carbon Intensity")
+```
+Adding a continuous heterogeneity (more power, cleaner)
+```{r}
+# Standardize baseline intensity (z-score)
+df_rq3 <- df_rq3 |>
+  mutate(z_intensity = as.numeric(scale(emis_int_base)))
+
+m_rq3_cont <- feols(
+  log_co2_pc ~ cpi10*z_intensity + lgdppc_c + ind_c + ren_c | country + year,
+  data = df_rq3, vcov = ~ country + year
+)
+
+# Slope at −1 SD, mean, +1 SD:
+sd1 <- 1
+wald(m_rq3_cont, "cpi10 + (-1)*cpi10:z_intensity = 0")  # low baseline
+wald(m_rq3_cont, "cpi10 = 0")                           # mean baseline
+wald(m_rq3_cont, "cpi10 + ( 1)*cpi10:z_intensity = 0")  # high baseline
 
 ```
 
+```{r}
+# Find one term among multiple acceptable name variants
+.find_one <- function(nm, candidates) {
+  hit <- candidates[candidates %in% nm]
+  if (length(hit) == 0) return(NA_character_)
+  hit[1]
+}
+
+# Build name-robust list of terms for dynamic het. (0–2y)
+get_terms_dynhet <- function(nm, var = "cpi10", lags = 0:2, int = "HighCarbon") {
+  out_low  <- character(0)
+  out_high <- character(0)
+
+  for (k in lags) {
+    if (k == 0) {
+      # base contemporaneous
+      base <- .find_one(nm, var)
+      # interaction can be in either order, with/without spaces
+      int_cands <- c(
+        sprintf("%s:%s", var, int),
+        sprintf("%s:%s", int, var)
+      )
+      inter <- .find_one(nm, int_cands)
+    } else {
+      # lag name variants with/without spaces
+      lag_cands <- c(
+        sprintf("l(%s,%d)", var, k),
+        sprintf("l(%s, %d)", var, k)
+      )
+      base <- .find_one(nm, lag_cands)
+
+      int_cands <- c(
+        sprintf("l(%s,%d):%s", var, k, int),
+        sprintf("l(%s, %d):%s", var, k, int),
+        sprintf("%s:l(%s,%d)", int, var, k),
+        sprintf("%s:l(%s, %d)", int, var, k)
+      )
+      inter <- .find_one(nm, int_cands)
+    }
+    out_low  <- c(out_low,  base)
+    out_high <- c(out_high, inter)
+  }
+
+  list(low = out_low, high = out_high)
+}
+
+# Generic linear-combo (sum) with informative errors
+lincombo_sum <- function(mod, terms) {
+  nm <- names(coef(mod))
+  if (anyNA(terms)) {
+    miss_k <- which(is.na(terms))
+    stop("Some requested terms were not found in the model:\n",
+         paste(sprintf("  - component %d is missing", miss_k), collapse = "\n"),
+         "\nInspect names(coef(model)) to see available terms.")
+  }
+  b <- coef(mod)[terms]
+  V <- vcov(mod)[terms, terms, drop = FALSE]
+  est <- sum(b)
+  se  <- sqrt(sum(V))             # because all weights are 1
+  z   <- est/se
+  p   <- 2*pnorm(abs(z), lower.tail = FALSE)
+  ci  <- est + c(-1,1)*1.96*se
+  list(est=est, se=se, z=z, p=p, ci=ci, terms=terms)
+}
+
+
+```
+
+```{r}
+nm <- names(coef(m_rq3_dyn))
+tt <- get_terms_dynhet(nm, var = "cpi10", lags = 0:2, int = "HighCarbon")
+
+# (A) Low-intensity cumulative (0–2y): cpi10 + l1 + l2
+res_low  <- lincombo_sum(m_rq3_dyn, tt$low)
+
+# (B) High-intensity cumulative (0–2y): add the three interactions
+res_high <- lincombo_sum(m_rq3_dyn, c(tt$low, tt$high))
+
+# (C) Difference in cumulative effects (High − Low): just the three interactions
+res_diff <- lincombo_sum(m_rq3_dyn, tt$high)
+
+res_low
+res_high
+res_diff
+
+```
+```{r}
+# ---- store your cumulative results ----
+rq3_tab <- tribble(
+  ~Group,         ~Estimate,    ~`Std. Error`, ~z,        ~`p-value`, ~`95% CI Lower`, ~`95% CI Upper`, ~`% Δ CO2 (cum.)`,
+  "Low-intensity", -0.0128,      0.0223,       -0.573,    0.567,      -0.0565,         0.0310,          -1.28,
+  "High-intensity",-0.0060,      0.0209,       -0.288,    0.773,      -0.0471,         0.0350,          -0.60,
+  "Difference (H–L)", 0.0068,    0.0214,        0.315,    0.753,      -0.0353,         0.0488,           0.68
+)
+
+# ---- knit to LaTeX ----
+kable(
+  rq3_tab, "html", booktabs = TRUE, digits = 4,
+  caption = "RQ3: Cumulative 0--2-year effects of Carbon Pricing Index (CPI) by baseline carbon intensity. 
+Standard errors clustered two ways (country and year). CPI scaled by +10 €/t."
+)
+
+
+```
+Does RQ3 hold with CO2 totals?
+
+```{r}
+# Assumes: df_rq3 has HighCarbon and (optionally) z_intensity from before
+# If not, rebuild HighCarbon exactly as you did for per-capita.
+
+# --- Dynamic heterogeneity with totals (log CO2) ---
+m_rq3_dyn_tot <- feols(
+  log_co2 ~ cpi10*HighCarbon + l(cpi10,1)*HighCarbon + l(cpi10,2)*HighCarbon +
+            log_pop + lgdppc_c + ind_c + ren_c | country + year,
+  data     = df_rq3,
+  panel.id = ~ country + year,
+  vcov     = ~ country + year
+)
+
+# --- Helper to grab correct coefficient names and sum them (as before) ---
+.find_one <- function(nm, candidates){ hit <- candidates[candidates %in% nm]; if(!length(hit)) NA_character_ else hit[1] }
+get_terms_dynhet <- function(nm, var="cpi10", lags=0:2, int="HighCarbon"){
+  low <- high <- character(0)
+  for(k in lags){
+    if(k==0){
+      base <- .find_one(nm, var)
+      inter <- .find_one(nm, c(sprintf("%s:%s",var,int), sprintf("%s:%s",int,var)))
+    } else {
+      lag_cands <- c(sprintf("l(%s,%d)",var,k), sprintf("l(%s, %d)",var,k))
+      base <- .find_one(nm, lag_cands)
+      int_cands <- c(sprintf("l(%s,%d):%s",var,k,int), sprintf("l(%s, %d):%s",var,k,int),
+                     sprintf("%s:l(%s,%d)",int,var,k), sprintf("%s:l(%s, %d)",int,var,k))
+      inter <- .find_one(nm, int_cands)
+    }
+    low  <- c(low,  base)
+    high <- c(high, inter)
+  }
+  list(low=low, high=high)
+}
+lincombo_sum <- function(mod, terms){
+  nm <- names(coef(mod))
+  if(anyNA(terms)) stop("Missing terms: ", paste(which(is.na(terms)), collapse=", "),
+                        "\nCheck names(coef(model)).")
+  b <- coef(mod)[terms]
+  V <- vcov(mod)[terms, terms, drop=FALSE]
+  est <- sum(b)
+  se  <- sqrt(sum(V))     # all weights 1
+  z   <- est/se
+  p   <- 2*pnorm(abs(z), lower.tail = FALSE)
+  ci  <- est + c(-1,1)*1.96*se
+  list(est=est, se=se, z=z, p=p, ci=ci, terms=terms)
+}
+
+# --- Cumulative (0–2y): Low, High, Difference for totals ---
+nm_tot <- names(coef(m_rq3_dyn_tot))
+tt_tot <- get_terms_dynhet(nm_tot, var="cpi10", lags=0:2, int="HighCarbon")
+
+res_low_tot  <- lincombo_sum(m_rq3_dyn_tot, tt_tot$low)
+res_high_tot <- lincombo_sum(m_rq3_dyn_tot, c(tt_tot$low, tt_tot$high))
+res_diff_tot <- lincombo_sum(m_rq3_dyn_tot, tt_tot$high)
+
+res_low_tot
+res_high_tot
+res_diff_tot
+
+# Optional: put these into an etable GOF block
+etable(
+  m_rq3_dyn_tot,
+  se.below = TRUE,
+  headers = "RQ3 (Totals): Dynamic heterogeneity (0–2y)",
+  gof = list(
+    "Cumulative (Low, 0–2y)"  = sprintf("%.4f (%.4f), p=%.3f", res_low_tot$est,  res_low_tot$se,  res_low_tot$p),
+    "Cumulative (High, 0–2y)" = sprintf("%.4f (%.4f), p=%.3f", res_high_tot$est, res_high_tot$se, res_high_tot$p),
+    "Diff High−Low (0–2y)"    = sprintf("%.4f (%.4f), p=%.3f", res_diff_tot$est, res_diff_tot$se, res_diff_tot$p)
+  )
+)
+
+```
+
+here is my change
