@@ -1,0 +1,38 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+caption={RQ3 — Carbon-Intensity Heterogeneity: Direct Effect (Per-capita main; Totals robustness)},
+note{}={* p \num{< 0.05}, ** p \num{< 0.01}, *** p \num{< 0.001}},
+note{ }={Country \& year fixed effects in all models.},
+note{  }={Standard errors two-way clustered by country and year.},
+note{   }={+1 in CPI regressor = +10 €/t.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]},
+column{2-3}={}{halign=c,},
+column{1}={}{halign=l,},
+hline{14}={1-3}{solid, black, 0.05em},
+}                     %% tabularray inner close
+\toprule
+& RQ3 Direct: Per-capita (main) & RQ3 Direct: Totals + log\_pop \\ \midrule %% TinyTableHeader
+CPI (t) / +10 €/t & \num{-0.009} & \num{-0.005} \\
+& (\num{0.013}) & (\num{0.014}) \\
+CPI (t) × HighCarbon & \num{0.015} & \num{-0.002} \\
+& (\num{0.014}) & (\num{0.015}) \\
+log GDP pc (centered) & \num{0.362} & \num{0.241} \\
+& (\num{0.222}) & (\num{0.148}) \\
+Industry share (centered) & \num{0.003} & \num{0.004} \\
+& (\num{0.010}) & (\num{0.005}) \\
+Renewables (centered) & \num{-1.666}*** & \num{-1.316}*** \\
+& (\num{0.332}) & (\num{0.256}) \\
+log Population &  & \num{-0.142} \\
+&  & (\num{0.275}) \\
+Num.Obs. & \num{540} & \num{540} \\
+R2 & \num{0.956} & \num{0.998} \\
+R2 Within & \num{0.349} & \num{0.308} \\
+Std.Errors & by: country \& year & by: country \& year \\
+FE: country & X & X \\
+FE: year & X & X \\
+\bottomrule
+\end{talltblr}
+\end{table}

@@ -37,6 +37,9 @@ library(modelsummary)
 library(glue)
 library(plm)
 library(sandwich); library(lmtest)
+library(tibble)
+library(kableExtra)
+
 # Load the data
 
 # read the sheet called "final_sheet"
@@ -335,16 +338,16 @@ msummary(
   models_rq1,
   fmt = 3,
   stars = c('*'=.05,'**'=.01,'***'=.001),
-  coef_map = c(
-    "cpi10"     = "CPI (+10 €/t)",
-    "lgdppc_c"  = "log GDP pc (within)",
-    "ind_c"     = "Industry share",
-    "ren_c"     = "Renewable share",
-    "log_pop"   = "log Population"
-  ),
-  gof_map = c("n","r.squared.within"),
+  # coef_map = c(
+  #   "cpi10"     = "CPI (+10 €/t)",
+  #   "lgdppc_c"  = "log GDP pc (within)",
+  #   "ind_c"     = "Industry share",
+  #   "ren_c"     = "Renewable share",
+  #   "log_pop"   = "log Population"
+  # ),
+  # gof_map = c("n","r.squared.within"),
   notes = "Country and year fixed effects in all models. Standard errors clustered two-ways by country and year. Significance: * p < 0.05, ** p < 0.01, *** p < 0.001.",
-  output = "html"
+  output = "latex"
 )
 
 ```
@@ -552,7 +555,7 @@ etable(m_rq3, se.below = TRUE, headers = "H3: High vs. Low Carbon Intensity")
 
 ```
 
-```{r}
+```{r not working}
 # Effects and tests
 # High group total effect = cpi10 + cpi10:HighCarbon
 wald(m_rq3, "cpi10 + cpi10:HighCarbon = 0")   # high group
@@ -589,7 +592,7 @@ etable(m_rq3_dyn, se.below = TRUE,
        headers = "H3 Dynamic: High vs. Low Carbon Intensity")
 ```
 Adding a continuous heterogeneity (more power, cleaner)
-```{r}
+```{r just for check}
 # Standardize baseline intensity (z-score)
 df_rq3 <- df_rq3 |>
   mutate(z_intensity = as.numeric(scale(emis_int_base)))
@@ -914,13 +917,8 @@ etable(
 )
 
 ```
-
+### Tables
 ```{r}
-# Packages
-library(modelsummary)
-library(dplyr)
-library(stringr)
-library(tibble)
 
 # -------- Helper: nicely format "est (se)" ----------
 fmt_es <- function(est, se, digits = 4) {
@@ -991,7 +989,6 @@ msummary(
 ```
 
 ```{r}
-library(kableExtra)
 
 cum_tab <- dplyr::tibble(
   `Cumulative (0–2y)` = c("Low", "High", "High − Low"),
@@ -1014,6 +1011,74 @@ kbl(cum_tab, format = "html", booktabs = TRUE, align = "lcc",
 
 ```
 
+#### tables unique
+
+```{r}
+
+# Pretty labels
+pretty_map_rq3 <- c(
+  "cpi10"                = "CPI (t) / +10 €/t",
+  "HighCarbon"           = "HighCarbon (baseline absorbed)",  # absorbed by country FE
+  "cpi10:HighCarbon"     = "CPI (t) × HighCarbon",
+  "lgdppc_c"             = "log GDP pc (centered)",
+  "ind_c"                = "Industry share (centered)",
+  "ren_c"                = "Renewables (centered)",
+  "log_pop"              = "log Population"
+)
+
+gof_omit <- "IC|Log.Lik|Adj|AIC|BIC|RMSE"
+dir.create("tables", showWarnings = FALSE)
+
+msummary(
+  list(
+    "RQ3 Direct: Per-capita (main)" = m_rq3,
+    "RQ3 Direct: Totals + log_pop"  = m_rq3_direct_tot
+  ),
+  output    = "tables/rq3_direct_main.tex",
+  stars     = c('*'=.05, '**'=.01, '***'=.001),
+  statistic = "({std.error})",
+  coef_map  = pretty_map_rq3,
+  gof_omit  = gof_omit,
+  notes = c(
+    "Country & year fixed effects in all models.",
+    "Standard errors two-way clustered by country and year.",
+    "+1 in CPI regressor = +10 €/t."
+  ),
+  title = "RQ3 — Carbon-Intensity Heterogeneity: Direct Effect (Per-capita main; Totals robustness)"
+)
+
+```
+```{r}
+# Extend labels for lag and interaction terms (map both directions defensively)
+pretty_map_rq3_dyn <- c(pretty_map_rq3,
+  "l(cpi10,1)"                   = "CPI (t−1)",
+  "l(cpi10,2)"                   = "CPI (t−2)",
+  "l(cpi10,1):HighCarbon"        = "CPI (t−1) × HighCarbon",
+  "HighCarbon:l(cpi10,1)"        = "CPI (t−1) × HighCarbon",
+  "l(cpi10,2):HighCarbon"        = "CPI (t−2) × HighCarbon",
+  "HighCarbon:l(cpi10,2)"        = "CPI (t−2) × HighCarbon"
+)
+
+msummary(
+  list(
+    "RQ3 Dynamic: Per-capita (main)" = m_rq3_dyn_pc,
+    "RQ3 Dynamic: Totals + log_pop"  = m_rq3_dyn_tot
+  ),
+  output    = "tables/rq3_dynamic_main.tex",
+  stars     = c('*'=.05, '**'=.01, '***'=.001),
+  statistic = "({std.error})",
+  coef_map  = pretty_map_rq3_dyn,
+  gof_omit  = gof_omit,
+  notes = c(
+    "Country & year fixed effects in all models.",
+    "Standard errors two-way clustered by country and year.",
+    "Dynamic specs include CPI(t), CPI(t−1), and CPI(t−2) interacted with HighCarbon.",
+    "+1 in CPI regressor = +10 €/t."
+  ),
+  title = "RQ3 — Carbon-Intensity Heterogeneity: Dynamic Effects (Per-capita main; Totals robustness)"
+)
+
+```
 
 ## RQ 4
 
@@ -1151,7 +1216,7 @@ res_rq4_pc
 res_rq4_tot
 
 ```
-
+### Tables
 ```{r app RQ4}
 fmt_es <- function(est, se, digits = 4) sprintf(paste0("%.",digits,"f (%.",digits,"f)"), est, se)
 
@@ -1253,3 +1318,518 @@ msummary(
 
 ```
 
+# Graphs 
+
+## RQ3 4
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(fixest)
+library(stringr)
+
+# ---- unified plot theme ----
+theme_paper <- function() {
+  theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold"),
+      legend.position = "top"
+    )
+}
+
+# ---- name finder (handles spaces in l( , ) and : order) ----
+.find_one <- function(nm, candidates){
+  hit <- candidates[candidates %in% nm]
+  if (!length(hit)) NA_character_ else hit[1]
+}
+
+# ---- collect base & interaction terms for horizons 0:K ----
+collect_terms <- function(nm, var = "cpi10", K = 2, int = "HighCarbon"){
+  tibble(h = 0:K) %>%
+    rowwise() %>%
+    mutate(
+      term_base = if (h == 0) .find_one(nm, var) else
+                  .find_one(nm, c(sprintf("l(%s,%d)", var, h), sprintf("l(%s, %d)", var, h))),
+      term_int  = if (h == 0) .find_one(nm, c(sprintf("%s:%s", var, int), sprintf("%s:%s", int, var))) else
+                  .find_one(nm, c(sprintf("l(%s,%d):%s", var, h, int),
+                                  sprintf("l(%s, %d):%s", var, h, int),
+                                  sprintf("%s:l(%s,%d)", int, var, h),
+                                  sprintf("%s:l(%s, %d)", int, var, h)))
+    ) %>%
+    ungroup()
+}
+
+# ---- extract horizon-by-horizon effects (Low = base; High = base+int) ----
+dyn_effects_df <- function(mod, var = "cpi10", K = 2, int = "HighCarbon", vcov_arg = ~ country + year) {
+  nm   <- names(coef(mod))
+  V    <- vcov(mod, vcov = vcov_arg)
+  terms <- collect_terms(nm, var, K, int)
+
+  # build rows for Low and High at each horizon
+  df_list <- lapply(1:nrow(terms), function(i){
+    tb <- terms[i,]
+    # LOW: just base term
+    low_terms  <- na.omit(c(tb$term_base))
+    # HIGH: base + interaction
+    high_terms <- na.omit(c(tb$term_base, tb$term_int))
+
+    # helper to get est/se for a set of terms with weight 1
+    est_se <- function(trms){
+      b <- coef(mod)[trms]
+      VV <- V[trms, trms, drop = FALSE]
+      est <- sum(b)
+      se  <- sqrt(sum(VV)) # weights 1
+      c(est = est, se = se)
+    }
+    c_low  <- est_se(low_terms)
+    c_high <- est_se(high_terms)
+
+    tibble(
+      h = tb$h,
+      group = c("Low", "High"),
+      est = c(c_low["est"], c_high["est"]),
+      se  = c(c_low["se"],  c_high["se"])
+    )
+  })
+  bind_rows(df_list) %>%
+    mutate(ci_lo = est - 1.96*se, ci_hi = est + 1.96*se)
+}
+
+# ---- cumulative (0:K) Low/High/Diff ----
+cum_0K_df <- function(mod, var = "cpi10", K = 2, int = "HighCarbon", vcov_arg = ~ country + year){
+  nm <- names(coef(mod))
+  V  <- vcov(mod, vcov = vcov_arg)
+  terms <- collect_terms(nm, var, K, int)
+
+  # assemble vectors of term names
+  low_terms  <- na.omit(terms$term_base)
+  high_add   <- na.omit(terms$term_int)
+  high_terms <- na.omit(c(low_terms, high_add))
+  diff_terms <- na.omit(high_add)
+
+  est_se <- function(trms){
+    b <- coef(mod)[trms]
+    VV <- V[trms, trms, drop = FALSE]
+    est <- sum(b); se <- sqrt(sum(VV))
+    c(est = est, se = se)
+  }
+  LOW  <- est_se(low_terms)
+  HIGH <- est_se(high_terms)
+  DIFF <- est_se(diff_terms)
+
+  tibble(
+    group = c("Low (0–2y)", "High (0–2y)", "High − Low (0–2y)"),
+    est   = c(LOW["est"], HIGH["est"], DIFF["est"]),
+    se    = c(LOW["se"],  HIGH["se"],  DIFF["se"])
+  ) %>% mutate(ci_lo = est - 1.96*se, ci_hi = est + 1.96*se)
+}
+
+```
+
+rq 3- dynamic effect horizons
+
+```{r}
+df_dyn_rq3 <- dyn_effects_df(m_rq3_dyn_pc, var = "cpi10", K = 2, int = "HighCarbon", vcov_arg = ~ country + year)
+
+gg_rq3_dyn <- ggplot(df_dyn_rq3, aes(x = h, y = est, color = group)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi, fill = group), alpha = 0.15, color = NA) +
+  geom_point(size = 2) +
+  geom_line() +
+  scale_x_continuous(breaks = 0:2, labels = c("t","t−1","t−2")) +
+  labs(
+    title = "RQ3: Dynamic CPI effect by horizon (per-capita)",
+    x = "Horizon",
+    y = "Effect on log CO₂ per capita",
+    color = "", fill = ""
+  ) +
+  theme_paper()
+
+gg_rq3_dyn
+
+```
+rq 3 - cumulative effects
+
+```{r}
+df_cum_rq3 <- cum_0K_df(m_rq3_dyn_pc, var = "cpi10", K = 2, int = "HighCarbon", vcov_arg = ~ country + year)
+
+gg_rq3_cum <- ggplot(df_cum_rq3, aes(x = group, y = est)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_col(width = 0.6) +
+  geom_errorbar(aes(ymin = ci_lo, ymax = ci_hi), width = 0.15) +
+  labs(
+    title = "RQ3: Cumulative CPI effect (0–2 years)",
+    x = "", y = "Cumulative effect on log CO2 per capita"
+  ) +
+  theme_paper()
+
+gg_rq3_cum
+
+```
+rq 3- direct effect forecast
+
+```{r}
+# pull CPI main & interaction with HighCarbon from the direct model m_rq3
+summ <- summary(m_rq3, vcov = ~ country + year)
+tab  <- broom::tidy(summ)
+
+forest_rq3 <- tab %>%
+  filter(term %in% c("cpi10", "cpi10:HighCarbon", "HighCarbon:cpi10")) %>%
+  mutate(term = recode(term,
+                       "cpi10" = "CPI (t)",
+                       "cpi10:HighCarbon" = "CPI (t) × HighCarbon",
+                       "HighCarbon:cpi10" = "CPI (t) × HighCarbon")) %>%
+  mutate(term = factor(term, levels = rev(c("CPI (t)", "CPI (t) × HighCarbon"))))
+
+gg_rq3_direct <- ggplot(forest_rq3, aes(y = term, x = estimate)) +
+  geom_vline(xintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  geom_errorbarh(aes(xmin = estimate - 1.96*std.error,
+                     xmax = estimate + 1.96*std.error), height = 0.2) +
+  labs(
+    title = "RQ3: Direct effects (per-capita)",
+    x = "Coefficient on log CO2 per capita", y = ""
+  ) +
+  theme_paper()
+
+gg_rq3_direct
+
+```
+rq 4 - dynamic effect horizons
+
+```{r not working}
+# Dynamic by horizon
+df_dyn_rq4 <- dyn_effects_df(m_rq4_dyn_pc, var = "cpi10", K = 2, int = "HighIncome", vcov_arg = ~ country + year)
+
+gg_rq4_dyn <- ggplot(df_dyn_rq4, aes(x = h, y = est, color = group)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi, fill = group), alpha = 0.15, color = NA) +
+  geom_point(size = 2) +
+  geom_line() +
+  scale_x_continuous(breaks = 0:2, labels = c("t","t−1","t−2")) +
+  labs(
+    title = "RQ4: Dynamic CPI effect by horizon (per-capita)",
+    x = "Horizon",
+    y = "Effect on log CO₂ per capita",
+    color = "", fill = ""
+  ) +
+  theme_paper()
+
+# Cumulative bars
+df_cum_rq4 <- cum_0K_df(m_rq4_dyn_pc, var = "cpi10", K = 2, int = "HighIncome", vcov_arg = ~ country + year)
+
+gg_rq4_cum <- ggplot(df_cum_rq4, aes(x = group, y = est)) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_col(width = 0.6) +
+  geom_errorbar(aes(ymin = ci_lo, ymax = ci_hi), width = 0.15) +
+  labs(
+    title = "RQ4: Cumulative CPI effect (0–2 years)",
+    x = "", y = "Cumulative effect on log CO₂ per capita"
+  ) +
+  theme_paper()
+
+# Direct-effect forest
+summ4 <- summary(m_rq4_direct_pc, vcov = ~ country + year)
+tab4  <- broom::tidy(summ4)
+
+forest_rq4 <- tab4 %>%
+  filter(term %in% c("cpi10", "cpi10:HighIncome", "HighIncome:cpi10")) %>%
+  mutate(term = recode(term,
+                       "cpi10" = "CPI (t)",
+                       "cpi10:HighIncome" = "CPI (t) × HighIncome",
+                       "HighIncome:cpi10" = "CPI (t) × HighIncome")) %>%
+  mutate(term = factor(term, levels = rev(c("CPI (t)", "CPI (t) × HighIncome"))))
+
+gg_rq4_direct <- ggplot(forest_rq4, aes(y = term, x = estimate)) +
+  geom_vline(xintercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  geom_errorbarh(aes(xmin = estimate - 1.96*std.error,
+                     xmax = estimate + 1.96*std.error), height = 0.2) +
+  labs(
+    title = "RQ4: Direct effects (per-capita)",
+    x = "Coefficient on log CO₂ per capita", y = ""
+  ) +
+  theme_paper()
+
+```
+```{r}
+library(dplyr)
+library(ggplot2)
+library(stringr)
+
+cpi_plot <- analysis_sample %>%
+  mutate(year = as.integer(year),
+         cpi_eur = 10 * cpi10) %>%
+  filter(year >= 2005, year <= 2023) %>%
+  arrange(country, year)
+
+```
+
+```{r}
+p_facets <- ggplot(cpi_plot, aes(x = year, y = cpi_eur)) +
+  geom_hline(yintercept = 0, linetype = 2, linewidth = 0.2) +
+  geom_line(linewidth = 0.5) +
+  facet_wrap(~ country, ncol = 6) +  # adjust columns to fit your layout
+  scale_x_continuous(breaks = c(2005, 2010, 2015, 2020)) +
+  labs(title = "Carbon Price Index by Country (€/t)",
+       x = NULL, y = "CPI (€/t)") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        strip.text = element_text(face = "bold"),
+        plot.title = element_text(face = "bold"))
+p_facets
+
+```
+If some countries have tiny variance and look flat, switch to scales = "free_y" to emphasize shapes (but lose cross-panel comparability):
+```{r}
+p_facets_free <- p_facets + facet_wrap(~ country, ncol = 6, scales = "free_y")
+p_facets_free
+```
+
+```{r}
+highlight <- c("Germany","France","Netherlands","Sweden")  # or ISO codes matching your `country`
+
+cpi_highlight <- cpi_plot %>%
+  mutate(group = if_else(country %in% highlight, "Highlighted","Other"))
+
+p_high <- ggplot(cpi_highlight, aes(year, cpi_eur, group = country)) +
+  geom_line(data = ~ filter(.x, group=="Other"),
+            alpha = 0.35, linewidth = 0.4, color = "grey50") +
+  geom_line(data = ~ filter(.x, group=="Highlighted"),
+            linewidth = 0.9) +
+  labs(title = "Carbon Price Index (€/t): highlight vs. others",
+       x = NULL, y = "CPI (€/t)") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        plot.title = element_text(face = "bold"))
+p_high
+
+```
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# ---- Data prep ----
+cpi_plot <- analysis_sample %>%
+  mutate(year = as.integer(year),
+         cpi_eur = 10 * cpi10) %>%
+  filter(year >= 2005, year <= 2023) %>%
+  arrange(country, year)
+
+# ---- Define EU ETS phases with higher-contrast greens ----
+phase_rects <- tibble::tibble(
+  xmin  = c(2005, 2008, 2013, 2021),
+  xmax  = c(2007.99, 2012.99, 2020.99, 2023.99),
+  phase = c("Phase I", "Phase II", "Phase III", "Phase IV"),
+  fill  = c("#E5F5E0", "#A1D99B", "#41AB5D", "#006D2C")
+)
+
+# ---- Plot ----
+p_cpi_ets_contrast <- ggplot() +
+  geom_rect(data = phase_rects,
+            aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
+            alpha = 0.25, color = NA) +     # higher alpha for stronger contrast
+  geom_line(data = cpi_plot, aes(year, cpi_eur, group = country),
+            linewidth = 0.5, color = "black") +
+  facet_wrap(~ country, ncol = 6) +
+  scale_x_continuous(breaks = c(2005, 2010, 2015, 2020)) +
+  scale_fill_manual(values = phase_rects$fill, name = "EU ETS Phase") +
+  labs(title = "Carbon Price Index by Country with EU ETS Phases (2005–2023)",
+       x = NULL, y = "CPI (€/t)") +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom",
+    legend.box = "horizontal"
+  )
+
+p_cpi_ets_contrast
+
+
+```
+
+```{r}
+dir.create("figs", showWarnings = FALSE)
+ggsave("figs/cpi_by_country_phases_greencontrast.pdf", p_cpi_ets_contrast)
+ggsave("figs/cpi_by_country_phases_greencontrast.png", p_cpi_ets_contrast, width = 8, height = 6, dpi = 300)
+
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Data prep
+cpi_lines <- analysis_sample %>%
+  mutate(year = as.integer(year),
+         cpi_eur = 10 * cpi10) %>%
+  filter(year >= 2005, year <= 2023) %>%
+  arrange(country, year)
+
+# 1) Simple multi-country colored lines (legend shown)
+p_cpi_lines <- ggplot(cpi_lines, aes(x = year, y = cpi_eur, color = country, group = country)) +
+  geom_line(linewidth = 0.7, alpha = 0.9) +
+  scale_x_continuous(breaks = c(2005, 2010, 2015, 2020, 2023)) +
+  labs(title = "Carbon Price Index by Country (2005–2023)",
+       x = NULL, y = "CPI (€/t)", color = "Country") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        plot.title = element_text(face = "bold"),
+        legend.position = "right")
+p_cpi_lines
+
+# If you prefer a colorblind-friendly palette:
+# + scale_color_viridis_d(option = "C", end = 0.95)
+
+# 2) End-of-line labels instead of a big legend (nice for many countries)
+library(ggrepel)
+last_pts <- cpi_lines %>%
+  group_by(country) %>%
+  filter(year == max(year)) %>%
+  ungroup()
+
+p_cpi_labeled <- ggplot(cpi_lines, aes(year, cpi_eur, group = country)) +
+  geom_line(aes(color = country), linewidth = 0.7, alpha = 0.9, show.legend = FALSE) +
+  geom_point(data = last_pts, aes(color = country), size = 1.5, show.legend = FALSE) +
+  ggrepel::geom_text_repel(
+    data = last_pts,
+    aes(label = country, color = country),
+    nudge_x = 0.4, direction = "y", hjust = 0, segment.alpha = 0.4, show.legend = FALSE, size = 3
+  ) +
+  scale_x_continuous(breaks = c(2005, 2010, 2015, 2020, 2023), limits = c(2005, 2024.5)) +
+  labs(title = "Carbon Price Index by Country (2005–2023)",
+       x = NULL, y = "CPI (€/t)") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        plot.title = element_text(face = "bold"),
+        plot.margin = margin(5.5, 40, 5.5, 5.5)) # space for labels on right
+p_cpi_labeled
+
+# 3) Faceted version if lines are too crowded (common y-axis)
+p_cpi_facets <- ggplot(cpi_lines, aes(year, cpi_eur, group = country)) +
+  geom_line(linewidth = 0.6) +
+  facet_wrap(~ country, ncol = 6) +  # adjust columns to fit layout
+  scale_x_continuous(breaks = c(2005, 2010, 2015, 2020, 2023)) +
+  labs(title = "Carbon Price Index by Country (Facets, 2005–2023)",
+       x = NULL, y = "CPI (€/t)") +
+  theme_minimal(base_size = 10) +
+  theme(panel.grid.minor = element_blank(),
+        strip.text = element_text(face = "bold"),
+        plot.title = element_text(face = "bold"))
+p_cpi_facets
+
+# Save PDFs for LaTeX
+dir.create("figs", showWarnings = FALSE)
+ggsave("figs/cpi_lines_all.pdf", p_cpi_lines,   width = 7.2, height = 4.6, device = cairo_pdf)
+ggsave("figs/cpi_lines_labels.pdf", p_cpi_labeled, width = 7.6, height = 5.0, device = cairo_pdf)
+ggsave("figs/cpi_lines_facets.pdf", p_cpi_facets, width = 7.5, height = 9.0, device = cairo_pdf)
+
+```
+
+```{r}
+
+# --- Prep: CPI in €/t, 2005–2023, and sort countries by last CPI (for nicer label stacking)
+cpi_lines <- analysis_sample %>%
+  mutate(year = as.integer(year),
+         cpi_eur = 10 * cpi10) %>%
+  filter(year >= 2005, year <= 2023) %>%
+  arrange(country, year)
+
+last_pts <- cpi_lines %>%
+  group_by(country) %>%
+  filter(year == max(year)) %>%
+  ungroup() %>%
+  arrange(desc(cpi_eur))
+
+# Fix factor order by last CPI so colors/labels are deterministic & stacked
+cpi_lines <- cpi_lines %>%
+  mutate(country = factor(country, levels = unique(last_pts$country)))
+last_pts   <- last_pts   %>%
+  mutate(country = factor(country, levels = levels(cpi_lines$country)))
+
+# --- Colorblind-safe qualitative palette (scales with N automatically)
+# Alternatives: "Set 2", "Set 3", "Dark 2"; "Dark 3" gives good contrast on white.
+cols <- setNames(hcl.colors(n = nlevels(cpi_lines$country), palette = "Dark 3"),
+                 levels(cpi_lines$country))
+
+# --- (Optional) EU ETS phase shading — set use_phases <- TRUE to enable
+use_phases <- FALSE
+phase_rects <- tibble::tibble(
+  xmin  = c(2005, 2008, 2013, 2021),
+  xmax  = c(2007.99, 2012.99, 2020.99, 2023.99),
+  phase = c("Phase I","Phase II","Phase III","Phase IV")
+)
+
+base_plot <- ggplot() +
+  { if (use_phases) geom_rect(data = phase_rects,
+                              aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+                              inherit.aes = FALSE, alpha = 0.10) } +
+  geom_line(data = cpi_lines,
+            aes(x = year, y = cpi_eur, group = country, color = country),
+            linewidth = 0.8, alpha = 0.95, show.legend = FALSE) +
+  geom_point(data = last_pts,
+             aes(x = year, y = cpi_eur, color = country),
+             size = 1.6, show.legend = FALSE) +
+  ggrepel::geom_text_repel(
+    data = last_pts,
+    aes(x = year, y = cpi_eur, label = country, color = country),
+    nudge_x = 0.6, direction = "y", hjust = 0,
+    min.segment.length = 0, segment.alpha = 0.4, segment.size = 0.3,
+    box.padding = 0.15, point.padding = 0.15, max.overlaps = Inf,
+    show.legend = FALSE, size = 3.0
+  ) +
+  scale_color_manual(values = cols) +
+  scale_x_continuous(breaks = c(2005, 2006, 2007, 2008, 2009, 2010,2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023),
+                     limits = c(2005, 2024.8)) +  # room on the right for labels
+  labs(
+    title = "Carbon Price Index by Country (2005–2023)",
+    x = NULL, y = "CPI (€/t)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face = "bold"),
+    plot.margin = margin(5.5, 60, 5.5, 5.5),  # extra right margin for labels
+    legend.position = "none",
+    axis.line.x = element_line(linewidth = 0.1, colour = "grey40"),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)
+  ) +
+  coord_cartesian(clip = "off")
+
+p_cpi_labeled_better <- base_plot
+p_cpi_labeled_better
+
+
+
+```
+
+```{r}
+# --- Phase boundaries & labels ---
+phase_boundaries <- c(2005, 2008, 2013, 2021)
+phase_labels <- data.frame(
+  x = c(2006.5, 2010, 2016.5, 2022),    # midpoints for labels
+  lab = c("Phase I", "Phase II", "Phase III", "Phase IV")
+)
+
+p_cpi_labeled_etslines <- base_plot +
+  # vertical lines for phase boundaries
+  geom_vline(xintercept = phase_boundaries,
+             linetype = c("solid","dashed","dashed","dashed"),
+             linewidth = 0.3, color = "grey35") +
+  # phase labels at top (adjust y if needed)
+  annotate("text",
+           x = phase_labels$x, y = Inf, vjust = 1.6,
+           label = phase_labels$lab,
+           size = 3.2, fontface = "bold", color = "grey20") +
+  # tiny buffer so labels fit
+  coord_cartesian(clip = "off", xlim = c(2005, 2024.9))
+
+p_cpi_labeled_etslines
+
+ggsave("figs/cpi_lines_labeled_etslines.pdf", p_cpi_labeled_etslines)
+```
+my changes
