@@ -1832,4 +1832,190 @@ p_cpi_labeled_etslines
 
 ggsave("figs/cpi_lines_labeled_etslines.pdf", p_cpi_labeled_etslines)
 ```
-my changes
+
+
+
+# Collinearity diagnostics by Imai and Kim
+
+```{r}
+m_chk <- lm(analysis_sample$cpi10 ~ factor(country) + factor(year), data=analysis_sample)
+1 - summary(m_chk)$r.squared   # share of variance left after FE
+
+
+# Build “idiosyncratic CPI” (remove common year shocks)
+analysis_sample$cpi10_id <- fixest::feols(cpi10 ~ 1 | year, data=analysis_sample)$residuals
+
+
+# Standardize within-country for stability & interpretability
+analysis_sample <- analysis_sample |>
+  dplyr::group_by(country) |>
+  dplyr::mutate(cpi10_w = as.numeric(scale(cpi10, center=TRUE, scale=TRUE))) |>
+  dplyr::ungroup()
+
+```
+
+With ~8.6% within-year-and-country variance, year FE are soaking up most ETS-driven swings, but there’s still signal from country-specific deviations (coverage changes, taxes, timing).
+
+Expect larger SEs and sensitivity to over-parameterization (too many lags/interactions).
+
+
+```{r rq1}
+# 1) Scale for interpretability (effect per 1 SD of idiosyncratic CPI)
+analysis_sample$cpi10_id_sd <- as.numeric(scale(analysis_sample$cpi10_id))
+
+# ensure time is numeric
+analysis_sample <- analysis_sample |>
+  dplyr::mutate(year = as.integer(year))
+
+# RQ1 with DK SEs: Baseline
+m_rq1_id <- fixest::feols(
+  log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
+  data = analysis_sample,
+  vcov = "DK",
+  panel.id = ~ country + year
+)
+summary(m_rq1_id)
+
+
+
+
+```
+
+```{r}
+
+
+# Coefficients table
+coeftable <- broom::tidy(m_rq1_id)
+coeftable
+
+# Extract CPI effect and 95% CI
+b <- coef(m_rq1_id)["cpi10_id_sd"]
+se <- sqrt(vcov(m_rq1_id)["cpi10_id_sd","cpi10_id_sd"])
+ci <- b + c(-1,1)*1.96*se
+c(b=b, se=se, ci_lo=ci[1], ci_hi=ci[2])
+
+# Translate to % change in CO2 per 1 SD increase in idiosyncratic CPI
+pct <- 100*(exp(b)-1)           # exact percent
+pct_ci <- 100*(exp(ci)-1)
+c(pct_effect=pct, ci_lo=pct_ci[1], ci_hi=pct_ci[2])
+
+
+
+sd_id <- sd(analysis_sample$cpi10_id, na.rm=TRUE)
+beta_per10 <- b / sd_id * 10
+ci_per10   <- ci / sd_id * 10
+100*(exp(beta_per10)-1)          # % change for +10 CPI points
+100*(exp(ci_per10)-1)
+
+# Adaptive DK with Bartlett kernel and automatic bandwidth
+m_rq1_id_adk <- feols(
+  log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
+  data = analysis_sample,
+  vcov = DK(adaptive = TRUE, kernel = "Bartlett"),
+  panel.id = ~ country + year
+)
+etable(m_rq1_id, m_rq1_id_adk, vcov = list("DK L=2","DK adaptive"))
+
+
+m_rq1_id_cl <- feols(
+  log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
+  data = analysis_sample,
+  cluster = ~ country
+)
+
+
+```
+
+
+
+
+
+```{r}
+sd_id <- sd(analysis_sample$cpi10_id, na.rm=TRUE)
+k <- 10 # 10 CPI points
+pct_change_10 <- 100 * coef(m_rq1_id)["cpi10_id_sd"] * (k / sd_id)
+pct_change_10_ci <- 100 * confint(m_rq1_id)["cpi10_id_sd", ] * (k / sd_id)
+pct_change_10; pct_change_10_ci
+
+
+m_rq1_id <- feols(
+  log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
+  data = analysis_sample,
+  vcov = DK(adaptative = TRUE, kernel = "Bartlett"),  # <- spelling!
+  panel.id = ~ country + year
+)
+
+
+```
+```{r}
+# Residualize each regressor on FE
+rx <- data.frame(
+  cpi   = feols(cpi10_id ~ 1 | country + year, data=analysis_sample)$residuals,
+  lgdpp = feols(lgdppc_c ~ 1 | country + year, data=analysis_sample)$residuals,
+  ind   = feols(ind_c     ~ 1 | country + year, data=analysis_sample)$residuals,
+  ren   = feols(ren_c     ~ 1 | country + year, data=analysis_sample)$residuals
+)
+
+# VIFs among residualized X's:
+lm_x <- lm(cpi ~ lgdpp + ind + ren, data = rx)
+car::vif(lm_x)                 # VIFs
+kappa(model.matrix(lm_x))      # condition number
+
+```
+```{r}
+# Dynamic TWFE with DK SEs (lags 0–2)
+m_rq2_alt <- feols(
+  log_co2_pc ~ cpi10_id_sd + l(cpi10_id_sd,1) + l(cpi10_id_sd,2) + lgdppc_c + ind_c + ren_c | country + year,
+  data = analysis_sample,
+  vcov = "DK",
+  panel.id = ~ country + year
+)
+summary(m_rq2_alt)
+
+m_rq2 <- feols(
+  log_co2_pc ~ fdl(cpi10_id_sd, 0:2) + lgdppc_c + ind_c + ren_c | country + year,
+  data = analysis_sample,
+  vcov = "DK",
+  panel.id = ~ country + year
+)
+
+
+# Cumulative (short-run) effect δ0+δ1+δ2 and its CI
+wald(m_rq2_alt, "c(cpi10_id_sd, fdl(cpi10_id_sd,0:2)l1, fdl(cpi10_id_sd,0:2)l2) = 0")
+
+# (Nice to show) coefficient plot
+iplot(m_rq2, x = "cpi10_id_sd")
+
+```
+
+
+
+```{r}
+# RQ2: Parsimonious lags + cumulative effect
+m_rq2_id <- fixest::feols(
+  log_co2_pc ~ l(cpi10_id_sd, 0:2) +lgdppc_c + ind_c + ren_c | country + year,
+  data= analysis_sample, 
+  vcov="DK",
+  panel.id = ~ country + year
+)
+summary(m_rq2_id)
+wald(m_rq2_id, "c(cpi10_id_sd, fdl(cpi10_id_sd,0:2)l1, fdl(cpi10_id_sd,0:2)l2)")
+
+
+```
+
+```{r}
+# Degree-2 Almon over 0–4 lags (adjust if you prefer 0–2)
+m_rq2_almon <- fixest::feols(
+  log_co2_pc ~ palmon(cpi10_id_sd, 0:4, 2) + lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+summary(m_rq2_almon)
+
+# Optional: recover implied lag weights
+plot(multicollinearity = FALSE); iplot(m_rq2_almon, x = "cpi10_id_sd")
+
+```
+
