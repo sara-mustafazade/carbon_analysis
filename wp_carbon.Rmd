@@ -1834,10 +1834,11 @@ ggsave("figs/cpi_lines_labeled_etslines.pdf", p_cpi_labeled_etslines)
 ```
 
 
+# Analysis
+## Collinearity diagnostics by Imai and Kim
 
-# Collinearity diagnostics by Imai and Kim
-
-```{r}
+```{r data prep}
+# Prepare CPI variable: remove common year shocks (FE) & standardize within-country
 m_chk <- lm(analysis_sample$cpi10 ~ factor(country) + factor(year), data=analysis_sample)
 1 - summary(m_chk)$r.squared   # share of variance left after FE
 
@@ -1852,22 +1853,25 @@ analysis_sample <- analysis_sample |>
   dplyr::mutate(cpi10_w = as.numeric(scale(cpi10, center=TRUE, scale=TRUE))) |>
   dplyr::ungroup()
 
-```
-
-With ~8.6% within-year-and-country variance, year FE are soaking up most ETS-driven swings, but there’s still signal from country-specific deviations (coverage changes, taxes, timing).
-
-Expect larger SEs and sensitivity to over-parameterization (too many lags/interactions).
-
-
-```{r rq1 DK}
-# 1) Scale for interpretability (effect per 1 SD of idiosyncratic CPI)
+# Scale for interpretability (effect per 1 SD of idiosyncratic CPI)
 analysis_sample$cpi10_id_sd <- as.numeric(scale(analysis_sample$cpi10_id))
 
 # ensure time is numeric
 analysis_sample <- analysis_sample |>
   dplyr::mutate(year = as.integer(year))
 
+# centered year for linear trends
+analysis_sample <- analysis_sample %>%
+  mutate(cyear = year - min(year, na.rm = TRUE))
 
+```
+
+With ~8.6% within-year-and-country variance, year FE are soaking up most ETS-driven swings, but there’s still signal from country-specific deviations (coverage changes, taxes, timing).
+
+Expect larger SEs and sensitivity to over-parameterization (too many lags/interactions).
+
+## RQ1: Baseline and robustness specs with Driscoll-Kraay SEs
+```{r rq1 DK}
 # --- (1) Baseline  -------------------------------------------
 m_rq1_base <- feols(
   log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
@@ -1901,22 +1905,44 @@ m_rq1_noren <- feols(
   panel.id = ~ country + year
 )
 
-# =========================
-# Wald tests you might want
-# =========================
+# =============
+# Wald tests 
+# =============
 
 # H0: CPI effect = 0 (each spec)
-wald(m_rq1_base,  "cpi10_id_sd = 0")
-wald(m_rq1_trend, "cpi10_id_sd = 0")
-wald(m_rq1_total, "cpi10_id_sd = 0")
-wald(m_rq1_noren, "cpi10_id_sd = 0")
+wald_1df <- function(m, name, vc = vcov(m)){
+  b <- coef(m)[name]; V <- vc[name, name]
+  W <- (b^2)/V
+  p <- 1 - pchisq(W, df = 1)
+  c(stat = W, p.value = p)
+}
 
-# Optional: test whether adding country trends changes the CPI significantly
-# (i.e., equality of CPI coefficients across models)
-# fixest::coefplot could show CIs side by side; equality test needs SUR-style setup.
-# A simple way is to compare estimates + CIs in etable and discuss stability.
+# Baseline: m_rq1_base
 
-# =========================
+wald_1df(m_rq1_base, "cpi10_id_sd", vc = vcov(m_rq1_base))          # DK
+
+vc_cl2_base <- sandwich::vcovCL(m_rq1_base, cluster = analysis_sample$country)
+wald_1df(m_rq1_base, "cpi10_id_sd", vc = vc_cl2) #cluster
+
+
+# Trends: m_rq1_trend
+wald_1df(m_rq1_trend, "cpi10_id_sd", vc = vcov(m_rq1_trend))          # DK
+
+vc_cl2 <- sandwich::vcovCL(m_rq1_trend, cluster = analysis_sample$country)
+wald_1df(m_rq1_trend, "cpi10_id_sd", vc = vc_cl2) #cluster
+
+# Total emissions: m_rq1_total
+wald_1df(m_rq1_total, "cpi10_id_sd", vc = vcov(m_rq1_total))          # DK
+vc_cl2_total <- sandwich::vcovCL(m_rq1_total, cluster = analysis_sample$country)
+wald_1df(m_rq1_total, "cpi10_id_sd", vc = vc_cl2_total) #cluster
+
+# No renewables: m_rq1_noren
+wald_1df(m_rq1_noren, "cpi10_id_sd", vc = vcov(m_rq1_noren))          # DK
+vc_cl2_noren <- sandwich::vcovCL(m_rq1_noren, cluster = analysis_sample$country)
+wald_1df(m_rq1_noren, "cpi10_id_sd", vc = vc_cl2_noren) #cluster
+
+
+# ====================
 # Etable
 
 etable(m_rq1_base, m_rq1_trend, m_rq1_total, m_rq1_noren,
@@ -1949,17 +1975,136 @@ pct_base; pct_trend; pct_total; pct_noren
 
 ```
 
-```{r}
+
+```{r rq1 wald table}
+
+# --- Helper: 1-df Wald test given a VCOV matrix ----------------------------
+wald_1df <- function(m, name, vc = vcov(m)){
+  b <- coef(m)[name]
+  V <- vc[name, name]
+  W <- (b^2) / V
+  p <- 1 - pchisq(W, df = 1)
+  c(stat = as.numeric(W), p.value = as.numeric(p))
+}
+
+# --- Your four models (already estimated) ----------------------------------
+# m_rq1_base, m_rq1_trend, m_rq1_total, m_rq1_noren
+
+mods <- list(
+  "Baseline"        = m_rq1_base,
+  "+ Country trends"= m_rq1_trend,
+  "Total emissions" = m_rq1_total,
+  "No renewables"   = m_rq1_noren
+)
+
+target <- "cpi10_id_sd"
+
+# --- Build results frame ----------------------------------------------------
+res <- lapply(names(mods), function(lbl){
+  m <- mods[[lbl]]
+
+  # DK vcov: comes from the model (since you estimated with vcov="DK")
+  vc_dk <- stats::vcov(m)
+
+  # Clustered-by-country vcov: supply a vector from the model frame
+  mf <- model.frame(m)
+  vc_cl <- sandwich::vcovCL(m, cluster = mf[["country"]])
+
+  # Coef & SEs
+  b    <- unname(coef(m)[target])
+  se_dk <- sqrt(vc_dk[target, target])
+  se_cl <- sqrt(vc_cl[target, target])
+
+  # Wald tests
+  w_dk <- wald_1df(m, target, vc = vc_dk)
+  w_cl <- wald_1df(m, target, vc = vc_cl)
+
+  # Fit stats
+  N   <- fixest::fitstat(m, "n")
+  wr2 <- fixest::fitstat(m, "wr2")
+
+  data.frame(
+    Specification    = lbl,
+    Beta_CPI         = b,
+    SE_DK            = se_dk,
+    Wald_DK          = w_dk["stat"],
+    p_DK             = w_dk["p.value"],
+    SE_Cluster       = se_cl,
+    Wald_Cluster     = w_cl["stat"],
+    p_Cluster        = w_cl["p.value"],
+    N                = as.integer(N),
+    Within_R2        = as.numeric(wr2),
+    check.names = FALSE
+  )
+}) %>% bind_rows()
+
+# Pretty rounding
+res_print <- res %>%
+  mutate(
+    Beta_CPI     = sprintf("%.4f", Beta_CPI),
+    SE_DK        = sprintf("(%.4f)", SE_DK),
+    Wald_DK      = sprintf("%.3f", Wald_DK),
+    p_DK         = sprintf("%.3f", p_DK),
+    SE_Cluster   = sprintf("(%.4f)", SE_Cluster),
+    Wald_Cluster = sprintf("%.3f", Wald_Cluster),
+    p_Cluster    = sprintf("%.3f", p_Cluster),
+    Within_R2    = sprintf("%.3f", Within_R2)
+  )
+
+sd_id <- sd(analysis_sample$cpi10_id, na.rm = TRUE)
+
+scale_to_pct <- function(b, sd_id, k = 10){
+  100 * as.numeric(b) * (k / sd_id)
+}
+
+res_print <- res %>%
+  mutate(
+    Beta_CPI     = sprintf("%.4f", Beta_CPI),
+    SE_DK        = sprintf("(%.4f)", SE_DK),
+    Wald_DK      = sprintf("%.3f", Wald_DK),
+    p_DK         = sprintf("%.3f", p_DK),
+    SE_Cluster   = sprintf("(%.4f)", SE_Cluster),
+    Wald_Cluster = sprintf("%.3f", Wald_Cluster),
+    p_Cluster    = sprintf("%.3f", p_Cluster),
+    Within_R2    = sprintf("%.3f", Within_R2),
+    PctEff_plus10CPI = sprintf("%.2f%%", scale_to_pct(res$Beta_CPI, sd_id))
+  )
+
+# Output: set format = "latex" or "html"
+out_format <- "html"
+cap <- "RQ1 — CPI (idiosyncratic, 1 SD): Coefficients, SEs, and Wald tests (H0: β=0) with DK and Country-Clustered VCOV."
+
+kbl(res_print,
+    format   = out_format,
+    booktabs = TRUE,
+    caption  = cap,
+    align    = "lrrrrrrrrrr") %>%    # 1 'l' + 10 'r' for 11 columns
+  kable_styling(full_width = FALSE, position = "center") %>%
+  add_header_above(c(" " = 2,
+                     "DK SE / Wald" = 3,
+                     "Clustered (country) SE / Wald" = 3,
+                     "Fit" = 2,
+                     "% effect (+10 CPI)" = 1))
 
 
-# Coefficients table
-coeftable <- broom::tidy(m_rq1_base)
-coeftable
 
+```
+```{r rq1 etable to latex}
+# --- RQ1: LaTeX table with fixest::etable ---------------------------------
+
+fixest::etable(list(m_rq1_base, m_rq1_trend, m_rq1_total, m_rq1_noren),
+               keep = c("cpi10_id_sd", "lgdppc_c", "ind_c", "ren_c"),
+               title      = "RQ1 — Effect of Carbon Pricing on $\\log(\\text{CO}_2)$ Emissions: TWFE Estimates",
+               label      = "tab:rq1_twfe",
+               notes = "All models include country and year fixed effects. The dependent variable is $\\log(\\text{CO}_2\\text{ per capita})$, except in the 'Total emissions' column where it is $\\log(\\text{CO}_2)$ (population added as a control). CPI is residualized on year FE and standardized within country (idiosyncratic CPI). Standard errors are Driscoll--Kraay (bandwidth $L{=}2$)."
+              # , tex= TRUE #uncomment to export as LaTeX
+               )
 
 ```
 
 
+
+## RQ2: Dynamic effects of CPI (lags, Almon)
 
 ```{r}
 # Residualize each regressor on FE
