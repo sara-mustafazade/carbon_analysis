@@ -1859,7 +1859,7 @@ With ~8.6% within-year-and-country variance, year FE are soaking up most ETS-dri
 Expect larger SEs and sensitivity to over-parameterization (too many lags/interactions).
 
 
-```{r rq1}
+```{r rq1 DK}
 # 1) Scale for interpretability (effect per 1 SD of idiosyncratic CPI)
 analysis_sample$cpi10_id_sd <- as.numeric(scale(analysis_sample$cpi10_id))
 
@@ -1867,17 +1867,85 @@ analysis_sample$cpi10_id_sd <- as.numeric(scale(analysis_sample$cpi10_id))
 analysis_sample <- analysis_sample |>
   dplyr::mutate(year = as.integer(year))
 
-# RQ1 with DK SEs: Baseline
-m_rq1_id <- fixest::feols(
+
+# --- (1) Baseline  -------------------------------------------
+m_rq1_base <- feols(
   log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
-  data = analysis_sample,
-  vcov = "DK",
+  data     = analysis_sample,
+  vcov     = "DK",
   panel.id = ~ country + year
 )
-summary(m_rq1_id)
 
+# --- (2) + Country-specific linear trends --------------------------------
+m_rq1_trend <- feols(
+  log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c + cyear:country | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
 
+# --- (3) Total emissions as DV -------------------------------------------
+# If you don't have it yet, create log total emissions:
+m_rq1_total <- feols(
+  log_co2 ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
 
+# --- (4) No renewables control -------------------------------------------
+m_rq1_noren <- feols(
+  log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+
+# =========================
+# Wald tests you might want
+# =========================
+
+# H0: CPI effect = 0 (each spec)
+wald(m_rq1_base,  "cpi10_id_sd = 0")
+wald(m_rq1_trend, "cpi10_id_sd = 0")
+wald(m_rq1_total, "cpi10_id_sd = 0")
+wald(m_rq1_noren, "cpi10_id_sd = 0")
+
+# Optional: test whether adding country trends changes the CPI significantly
+# (i.e., equality of CPI coefficients across models)
+# fixest::coefplot could show CIs side by side; equality test needs SUR-style setup.
+# A simple way is to compare estimates + CIs in etable and discuss stability.
+
+# =========================
+# Etable
+
+etable(m_rq1_base, m_rq1_trend, m_rq1_total, m_rq1_noren,
+         dict = c(
+    cpi10_id_sd = "CPI (idiosyncratic, 1 SD)",
+    lgdppc_c    = "log GDP pc (centered)",
+    ind_c       = "Industry share",
+    ren_c       = "Renewables share",
+    `cyear:country` = "Country trends"
+  ))
+
+# =========================
+# Translate CPI effect to "% for +10 CPI points" (each spec)
+# =========================
+sd_id <- sd(analysis_sample$cpi10_id, na.rm = TRUE)   # SD of *idiosyncratic* CPI in original units
+scale_to_pct <- function(model, k = 10){
+  b  <- coef(model)["cpi10_id_sd"]
+  ci <- confint(model)["cpi10_id_sd", ]
+  c(point = 100 * b  * (k / sd_id),
+    lo    = 100 * ci[1] * (k / sd_id),
+    hi    = 100 * ci[2] * (k / sd_id))
+}
+
+pct_base  <- scale_to_pct(m_rq1_base)
+pct_trend <- scale_to_pct(m_rq1_trend)
+pct_total <- scale_to_pct(m_rq1_total)
+pct_noren <- scale_to_pct(m_rq1_noren)
+
+pct_base; pct_trend; pct_total; pct_noren
 
 ```
 
@@ -1885,68 +1953,14 @@ summary(m_rq1_id)
 
 
 # Coefficients table
-coeftable <- broom::tidy(m_rq1_id)
+coeftable <- broom::tidy(m_rq1_base)
 coeftable
 
-# Extract CPI effect and 95% CI
-b <- coef(m_rq1_id)["cpi10_id_sd"]
-se <- sqrt(vcov(m_rq1_id)["cpi10_id_sd","cpi10_id_sd"])
-ci <- b + c(-1,1)*1.96*se
-c(b=b, se=se, ci_lo=ci[1], ci_hi=ci[2])
-
-# Translate to % change in CO2 per 1 SD increase in idiosyncratic CPI
-pct <- 100*(exp(b)-1)           # exact percent
-pct_ci <- 100*(exp(ci)-1)
-c(pct_effect=pct, ci_lo=pct_ci[1], ci_hi=pct_ci[2])
-
-
-
-sd_id <- sd(analysis_sample$cpi10_id, na.rm=TRUE)
-beta_per10 <- b / sd_id * 10
-ci_per10   <- ci / sd_id * 10
-100*(exp(beta_per10)-1)          # % change for +10 CPI points
-100*(exp(ci_per10)-1)
-
-# Adaptive DK with Bartlett kernel and automatic bandwidth
-m_rq1_id_adk <- feols(
-  log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
-  data = analysis_sample,
-  vcov = DK(adaptive = TRUE, kernel = "Bartlett"),
-  panel.id = ~ country + year
-)
-etable(m_rq1_id, m_rq1_id_adk, vcov = list("DK L=2","DK adaptive"))
-
-
-m_rq1_id_cl <- feols(
-  log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
-  data = analysis_sample,
-  cluster = ~ country
-)
-
 
 ```
 
 
 
-
-
-```{r}
-sd_id <- sd(analysis_sample$cpi10_id, na.rm=TRUE)
-k <- 10 # 10 CPI points
-pct_change_10 <- 100 * coef(m_rq1_id)["cpi10_id_sd"] * (k / sd_id)
-pct_change_10_ci <- 100 * confint(m_rq1_id)["cpi10_id_sd", ] * (k / sd_id)
-pct_change_10; pct_change_10_ci
-
-
-m_rq1_id <- feols(
-  log_co2_pc ~ cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
-  data = analysis_sample,
-  vcov = DK(adaptative = TRUE, kernel = "Bartlett"),  # <- spelling!
-  panel.id = ~ country + year
-)
-
-
-```
 ```{r}
 # Residualize each regressor on FE
 rx <- data.frame(
