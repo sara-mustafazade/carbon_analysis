@@ -2119,17 +2119,6 @@ m_rq2_dl <- feols(
 )
 summary(m_rq2_dl)
 
-# -- - Almon lag (2) -----------------------------------------------
-m_rq2_almon2 <- feols(
-  log_co2_pc ~ almon(cpi10_id_sd, 2, 2) +
-               lgdppc_c + ind_c + ren_c | country + year,
-  data     = analysis_sample,
-  vcov     = "DK",
-  panel.id = ~ country + year
-)
-
-summary(m_rq2_almon2)
-
 # --- Total emission
 
 m2_total<- feols(
@@ -2140,9 +2129,6 @@ m2_total<- feols(
   panel.id = ~ country + year
 )
 summary(m2_total)
-
-# --- Wald test for cumulative (δ0 + δ1 + δ2 = 0) -----------------------
-wald(m_rq2_dl, "c(cpi10_id_sd, l(cpi10_id_sd,1), l(cpi10_id_sd,2)) = 0")
 
 ```
 
@@ -2313,18 +2299,17 @@ res_print <- res %>%
 if (!dir.exists("tables")) dir.create("tables", recursive = TRUE)
 
 kbl(
-  res_print[, c("Specification","delta0","delta1","delta2","SumDL","SEsum","Wald","p","N","Within_R2","Pct10","Pct10_lo","Pct10_hi")],
-  format   = "latex", booktabs = TRUE,
+  res_print[, c("delta0","delta1","delta2","SumDL","SEsum","Wald","p","N","Within_R2","Pct10","Pct10_lo","Pct10_hi")],
+  format   = "html", booktabs = TRUE,
   caption  = "RQ2 — Dynamic TWFE (DL 0–2): lag coefficients, cumulative effect (clustered by country), and percent change for +10 CPI points.",
   label    = "tab:rq2_dl",
-  align    = "lrrrrrrrrrrrr"
-) %>%
+  align    = c("l", rep("r", 12))) %>%
   kable_styling(full_width = FALSE, position = "center") %>%
   add_header_above(c(" " = 1,
                      "Lag coefficients" = 3,
                      "Cumulative effect" = 3,
                      "Fit" = 2,
-                     "% effect (+10 CPI)" = 3)) 
+                     "% effect (+10 CPI)" = 4)) 
 
 # %>%
 #   add_footnote(
@@ -2385,6 +2370,137 @@ etable(mA_base, mA_trend, mA_total, mA_noren,
        notes = "All models include country and year fixed effects. The dependent variable is $\\log(\\text{CO}_2\\text{ per capita})$, except in the 'Total emissions' column where it is $\\log(\\text{CO}_2)$ (population added as a control). CPI is residualized on year FE and standardized within country (idiosyncratic CPI). Standard errors are Driscoll--Kraay (bandwidth $L{=}2$)."
      , tex= TRUE #uncomment to export as LaTeX
 )
+```
+
+
+## RQ3: High vs. low initial emitters
+
+```{r rq3: dummy}
+# assume you have: log_co2 = log(CO2), lgdp = log(GDP) (constant € / PPP), or compute on the fly
+pre <- analysis_sample |>
+  dplyr::filter(year %in% 2004:2006) |>
+  dplyr::group_by(country) |>
+  dplyr::summarise(
+    # emissions intensity of GDP in logs = log(CO2/GDP)
+    log_intensity_pre = mean( log_co2_pc - log_gdp_pc, na.rm = TRUE)
+  )
+
+thr <- stats::median(pre$log_intensity_pre, na.rm = TRUE)
+pre <- dplyr::mutate(pre, HighCarbon = as.integer(log_intensity_pre > thr))
+
+analysis_sample <- dplyr::left_join(analysis_sample, pre[, c("country","HighCarbon")], by = "country")
+
+```
+
+```{r rq3 results etable wald}
+fit_rq3_dl <- function(dv, rhs){
+  feols(
+    as.formula(paste0(
+      dv, " ~ ",
+      "cpi10_id_sd + l(cpi10_id_sd,1) + l(cpi10_id_sd,2) + ",
+      "cpi10_id_sd:HighCarbon + l(cpi10_id_sd,1):HighCarbon + l(cpi10_id_sd,2):HighCarbon + ",
+      rhs, " | country + year")),
+    data     = analysis_sample,
+    vcov     = "DK",
+    panel.id = ~ country + year
+  )
+}
+
+m3d_base  <- fit_rq3_dl("log_co2_pc",    "lgdppc_c + ind_c + ren_c")
+m3d_trend <- fit_rq3_dl("log_co2_pc",    "lgdppc_c + ind_c + ren_c + cyear:country")
+m3d_total <- fit_rq3_dl("log_co2", "lgdppc_c + ind_c + ren_c + log_pop")
+m3d_noren <- fit_rq3_dl("log_co2_pc",    "lgdppc_c + ind_c")
+
+modsD <- list(
+  "Baseline"         = m3d_base,
+  "+ Country trends" = m3d_trend,
+  "Total emissions"  = m3d_total,
+  "No renewables"    = m3d_noren
+)
+
+etable(modsD,
+       #keep = c("cpi10_id_sd", "l(cpi10_id_sd,1)", "l(cpi10_id_sd,2)",
+       #         "cpi10_id_sd:HighCarbon", "l(cpi10_id_sd,1):HighCarbon", "l(cpi10_id_sd,2):HighCarbon"),
+       title      = "RQ3 — Dynamic Effects of Carbon Pricing on $\\log(\\text{CO}_2)$ Emissions with Heterogeneity by Initial Emissions Intensity: TWFE Distributed Lag (0--2) Estimates",
+       label      = "tab:rq3_dl_twfe",
+       notes = "All models include country and year fixed effects. The dependent variable is $\\log(\\text{CO}_2\\text{ per capita})$, except in the 'Total emissions' column where it is $\\log(\\text{CO}_2)$ (population added as a control). CPI is residualized on year FE and standardized within country (idiosyncratic CPI). HighCarbon is a dummy for countries with above-median emissions intensity of GDP in the pre-treatment period (2004--2006). Standard errors are Driscoll--Kraay (bandwidth $L{=}2$)."
+     #, tex= TRUE #uncomment to export as LaTeX
+)
+# helper to build names present in your model output
+nm_low  <- c("cpi10_id_sd","l(cpi10_id_sd, 1)","l(cpi10_id_sd, 2)")
+nm_int  <- paste0(nm_low, ":HighCarbon")
+
+summarize_dynamic <- function(lbl, m){
+  bL <- coef(m)[nm_low]             # deltas for Low group
+  bI <- coef(m)[nm_int]             # theta (differences for High)
+
+  Vc <- sandwich::vcovCL(m, cluster = model.frame(m)[["country"]])
+  V  <- Vc[c(nm_low, nm_int), c(nm_low, nm_int)]
+
+  # cumulative: sums and SEs via delta method
+  S_low <- sum(bL)
+  S_high<- sum(bL + bI)
+
+  # gradient vectors (length 6): ones on the first 3 for S_low;
+  # ones on first 3 and next 3 for S_high
+  g_low  <- c(rep(1,3), rep(0,3))
+  g_high <- c(rep(1,3), rep(1,3))
+
+  se_low  <- sqrt(drop(t(g_low)  %*% V %*% g_low))
+  se_high <- sqrt(drop(t(g_high) %*% V %*% g_high))
+
+  W_low  <- (S_low/se_low)^2;   p_low  <- 1 - pchisq(W_low, 1)
+  W_high <- (S_high/se_high)^2; p_high <- 1 - pchisq(W_high,1)
+
+  # % per +10 CPI points
+  pct_low  <- pctify(S_low)
+  pct_high <- pctify(S_high)
+
+  data.frame(
+    Specification = lbl,
+    d0 = bL[1], d1 = bL[2], d2 = bL[3],
+    th0 = bI[1], th1 = bI[2], th2 = bI[3],
+    Sum_low  = S_low,  SE_low  = se_low,  Wald_low  = W_low,  p_low  = p_low,
+    Sum_high = S_high, SE_high = se_high, Wald_high = W_high, p_high = p_high,
+    Pct10_low = pct_low, Pct10_high = pct_high,
+    N = as.integer(fixest::fitstat(m,"n")),
+    Within_R2 = as.numeric(fixest::fitstat(m,"wr2")),
+    check.names = FALSE
+  )
+}
+
+# conversion helper: turns coefficient into % change for +10 CPI points
+sd_id <- sd(analysis_sample$cpi10_id, na.rm = TRUE)
+k_pts <- 10
+pctify <- function(b){
+  100 * b * (k_pts / sd_id)
+}
+
+resD <- do.call(rbind, Map(summarize_dynamic, names(modsD), modsD))
+
+# LaTeX table (cumulative effects shown; lag-by-lag available in resD if you want a second table)
+resD_print <- resD %>%
+  mutate(across(c(Sum_low,Sum_high), ~sprintf("%.4f", .)),
+         across(c(SE_low,SE_high),   ~sprintf("(%.4f)", .)),
+         across(c(Wald_low,Wald_high,p_low,p_high,Within_R2), ~sprintf("%.3f", .)),
+         across(c(Pct10_low,Pct10_high), ~sprintf("%.2f", .)))
+
+
+kbl(resD_print[,c(
+                  "Sum_low","SE_low","Wald_low","p_low",
+                  "Sum_high","SE_high","Wald_high","p_high",
+                  "N","Within_R2","Pct10_low","Pct10_high")],
+        format="html", booktabs=TRUE,   #change to "latex" for LaTeX output
+    caption="RQ3 — Dynamic TWFE (DL 0–2) with HighCarbon heterogeneity: cumulative CPI effects in low- vs. high-intensity countries (clustered by country).",
+    label="tab:rq3_dynamic",
+   align    = c("l", rep("r", 13))) %>%
+  kable_styling(full_width=FALSE, position="center")%>%
+  add_header_above(c(" " = 1, "Low-intensity (cum 0–2)"=4, "High-intensity (cum 0–2)"=4, "Fit"=2, "% effect (+10 CPI)"=2)) # %>%
+# cat(file="tables/rq3_dynamic.tex")
+# \input{tables/rq3_dynamic.tex}
+
+
+
 ```
 
 
