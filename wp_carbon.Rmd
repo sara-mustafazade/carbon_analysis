@@ -25,6 +25,8 @@ library(ggplot2)
 library(tidyr)
 library(readr)
 library(stringr)
+library(lubridate)
+library(car)
 # to pull variables
 library(eurostat)
 library(countrycode)
@@ -1922,7 +1924,7 @@ wald_1df <- function(m, name, vc = vcov(m)){
 wald_1df(m_rq1_base, "cpi10_id_sd", vc = vcov(m_rq1_base))          # DK
 
 vc_cl2_base <- sandwich::vcovCL(m_rq1_base, cluster = analysis_sample$country)
-wald_1df(m_rq1_base, "cpi10_id_sd", vc = vc_cl2) #cluster
+wald_1df(m_rq1_base, "cpi10_id_sd", vc = vc_cl2_base) #cluster
 
 
 # Trends: m_rq1_trend
@@ -2105,6 +2107,340 @@ fixest::etable(list(m_rq1_base, m_rq1_trend, m_rq1_total, m_rq1_noren),
 
 
 ## RQ2: Dynamic effects of CPI (lags, Almon)
+
+```{r}
+# --- Distributed Lag Model (0–2) ---------------------------------------
+m_rq2_dl <- feols(
+  log_co2_pc ~ cpi10_id_sd + l(cpi10_id_sd,1) + l(cpi10_id_sd,2) +
+               lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+summary(m_rq2_dl)
+
+# -- - Almon lag (2) -----------------------------------------------
+m_rq2_almon2 <- feols(
+  log_co2_pc ~ almon(cpi10_id_sd, 2, 2) +
+               lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+
+summary(m_rq2_almon2)
+
+# --- Total emission
+
+m2_total<- feols(
+  log_co2 ~ cpi10_id_sd + l(cpi10_id_sd,1) + l(cpi10_id_sd,2) +
+               lgdppc_c + ind_c + ren_c + log_pop | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+summary(m2_total)
+
+# --- Wald test for cumulative (δ0 + δ1 + δ2 = 0) -----------------------
+wald(m_rq2_dl, "c(cpi10_id_sd, l(cpi10_id_sd,1), l(cpi10_id_sd,2)) = 0")
+
+```
+
+```{r vif}
+# 1) Build aligned lag columns
+df_vif <- analysis_sample %>%
+  arrange(country, year) %>%
+  group_by(country) %>%
+  mutate(
+    cpi_l0 = cpi10_id_sd,
+    cpi_l1 = dplyr::lag(cpi10_id_sd, 1),
+    cpi_l2 = dplyr::lag(cpi10_id_sd, 2)
+  ) %>%
+  ungroup() %>%
+  # keep only rows where all lags are present
+  filter(!is.na(cpi_l0) & !is.na(cpi_l1) & !is.na(cpi_l2))
+
+# 2) Partial-out FE on the *same trimmed sample*
+r0 <- fixest::feols(cpi_l0 ~ 1 | country + year, data = df_vif)$residuals
+r1 <- fixest::feols(cpi_l1 ~ 1 | country + year, data = df_vif)$residuals
+r2 <- fixest::feols(cpi_l2 ~ 1 | country + year, data = df_vif)$residuals
+
+# 3) Now lengths match -> build data.frame and compute VIFs
+rx   <- data.frame(r0 = r0, r1 = r1, r2 = r2)
+lm_x <- lm(r0 ~ r1 + r2, data = rx)
+
+car::vif(lm_x)            # VIFs for the lag block
+kappa(model.matrix(lm_x)) # condition number (large = more collinearity)
+
+
+
+```
+```{r}
+# --- cumulative effect (δ0+δ1+δ2) with CLUSTERED-by-country VCOV ----
+library(sandwich)
+
+# names of the three lag coefficients:
+lag_names <- c("cpi10_id_sd","l(cpi10_id_sd, 1)","l(cpi10_id_sd, 2)")
+
+# 1) Coef vector and clustered VCOV
+b <- coef(m_rq2_dl)[lag_names]
+Vc_cl <- sandwich::vcovCL(m_rq2_dl, cluster = model.frame(m_rq2_dl)[["country"]])
+V <- Vc_cl[lag_names, lag_names]
+
+# 2) Sum, SE, Wald, p-value
+sum_b <- sum(b)
+se_sum <- sqrt(sum(V))  # since the gradient for sum is a vector of ones
+wald_stat <- (sum_b^2) / (se_sum^2)
+p_val <- 1 - pchisq(wald_stat, df = 1)
+c(sum = sum_b, se = se_sum, wald = wald_stat, p = p_val)
+
+# 3) 95% CI for the sum, then convert to "% for +10 CPI points"
+ci_sum <- sum_b + c(-1,1) * 1.96 * se_sum
+
+sd_id <- sd(analysis_sample$cpi10_id, na.rm = TRUE)  # SD of idiosyncratic CPI in original units
+k <- 10                                              # +10 CPI points
+
+pct_point <- 100 * sum_b * (k / sd_id)
+pct_ci    <- 100 * ci_sum * (k / sd_id)
+c(pct_point = pct_point, ci_lo = pct_ci[1], ci_hi = pct_ci[2])
+
+```
+```{r}
+
+# Ensure time is numeric & a simple country trend variable exists
+analysis_sample <- analysis_sample %>%
+  mutate(year = as.integer(year),
+         cyear = year - min(year, na.rm = TRUE)) %>%
+  arrange(country, year)
+
+# If you use total emissions in spec (3), ensure these exist:
+# analysis_sample$log_co2_total <- log(analysis_sample$co2_total)
+# analysis_sample$log_pop       <- log(analysis_sample$population)
+
+# ---- Helper: estimate DL(0–2) with given RHS & DV -------------------------
+fit_dl <- function(dv, rhs, data) {
+  feols(
+    as.formula(
+      paste0(dv, " ~ cpi10_id_sd + l(cpi10_id_sd,1) + l(cpi10_id_sd,2) + ",
+             rhs, " | country + year")
+    ),
+    data     = data,
+    vcov     = "DK",
+    panel.id = ~ country + year
+  )
+}
+
+# ---- Four specifications (match your RQ1) ---------------------------------
+m2_base  <- fit_dl("log_co2_pc",    "lgdppc_c + ind_c + ren_c",               analysis_sample)
+m2_trend <- fit_dl("log_co2_pc",    "lgdppc_c + ind_c + ren_c + cyear:country", analysis_sample)
+#m2_total <- fit_dl("log_co2_total", "lgdppc_c + ind_c + ren_c + log_pop",     analysis_sample)
+m2_noren <- fit_dl("log_co2_pc",    "lgdppc_c + ind_c",                        analysis_sample)
+
+
+mods <- list(
+  "Baseline"          = m2_base,
+  "+ Country trends"  = m2_trend,
+  "Total emissions"   = m2_total,
+  "No renewables"     = m2_noren
+)
+
+etable(mods,
+       #keep = c("cpi10_id_sd", "l(cpi10_id_sd,1)", "l(cpi10_id_sd,2)"),
+       title      = "RQ2 — Dynamic Effects of Carbon Pricing on $\\log(\\text{CO}_2)$ Emissions: TWFE Distributed Lag (0--2) Estimates",
+       label      = "tab:rq2_dl_twfe",
+       notes = "All models include country and year fixed effects. The dependent variable is $\\log(\\text{CO}_2\\text{ per capita})$, except in the 'Total emissions' column where it is $\\log(\\text{CO}_2)$ (population added as a control). CPI is residualized on year FE and standardized within country (idiosyncratic CPI). Standard errors are Driscoll--Kraay (bandwidth $L{=}2$)."
+     #, tex= TRUE #uncomment to export as LaTeX
+)
+lag_names <- c("cpi10_id_sd", "l(cpi10_id_sd, 1)", "l(cpi10_id_sd, 2)")
+sd_id <- sd(analysis_sample$cpi10_id, na.rm = TRUE)  # SD of idiosyncratic CPI in original units
+k_pts <- 10
+
+# Wald & percent-effect extractor (clustered-by-country, robust to DK fragility)
+summarize_mod <- function(lbl, m) {
+  # coefficients for 0,1,2
+  b <- coef(m)[lag_names]
+  # clustered VCOV
+  Vc <- sandwich::vcovCL(m, cluster = model.frame(m)[["country"]])
+  V  <- Vc[lag_names, lag_names]
+
+  sum_b  <- sum(b)
+  se_sum <- sqrt(sum(V))
+  wald   <- (sum_b / se_sum)^2
+  pval   <- 1 - pchisq(wald, df = 1)
+  ci_sum <- sum_b + c(-1,1) * 1.96 * se_sum
+
+  # % effect for +10 CPI points
+  pct_point <- 100 * sum_b  * (k_pts / sd_id)
+  pct_ci    <- 100 * ci_sum * (k_pts / sd_id)
+
+  data.frame(
+    Specification = lbl,
+    delta0   = unname(b[1]),
+    delta1   = unname(b[2]),
+    delta2   = unname(b[3]),
+    SumDL    = unname(sum_b),
+    SEsum    = unname(se_sum),
+    Wald     = unname(wald),
+    p        = unname(pval),
+    N        = as.integer(fixest::fitstat(m, "n")),
+    Within_R2= as.numeric(fixest::fitstat(m, "wr2")),
+    Pct10    = pct_point,
+    Pct10_lo = pct_ci[1],
+    Pct10_hi = pct_ci[2],
+    check.names = FALSE
+  )
+}
+
+res <- do.call(rbind, Map(summarize_mod, names(mods), mods))
+
+# Nicely formatted table for LaTeX
+res_print <- res %>%
+  mutate(
+    delta0 = sprintf("%.4f", delta0),
+    delta1 = sprintf("%.4f", delta1),
+    delta2 = sprintf("%.4f", delta2),
+    SumDL  = sprintf("%.4f", SumDL),
+    SEsum  = sprintf("(%.4f)", SEsum),
+    Wald   = sprintf("%.3f", Wald),
+    p      = sprintf("%.3f", p),
+    Within_R2 = sprintf("%.3f", Within_R2),
+    Pct10    = sprintf("%.2f", Pct10),
+    Pct10_lo = sprintf("%.2f", Pct10_lo),
+    Pct10_hi = sprintf("%.2f", Pct10_hi)
+  )
+
+# Save LaTeX to file for your WP
+if (!dir.exists("tables")) dir.create("tables", recursive = TRUE)
+
+kbl(
+  res_print[, c("Specification","delta0","delta1","delta2","SumDL","SEsum","Wald","p","N","Within_R2","Pct10","Pct10_lo","Pct10_hi")],
+  format   = "latex", booktabs = TRUE,
+  caption  = "RQ2 — Dynamic TWFE (DL 0–2): lag coefficients, cumulative effect (clustered by country), and percent change for +10 CPI points.",
+  label    = "tab:rq2_dl",
+  align    = "lrrrrrrrrrrrr"
+) %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  add_header_above(c(" " = 1,
+                     "Lag coefficients" = 3,
+                     "Cumulative effect" = 3,
+                     "Fit" = 2,
+                     "% effect (+10 CPI)" = 3)) 
+
+# %>%
+#   add_footnote(
+#     colnames = F, align = "l",
+#     values = c("\\multicolumn{13}{l}{\\footnotesize Notes: Models include country and year FE; Driscoll--Kraay SEs in estimation. Joint tests use country-clustered VCOV to avoid DK fragility with short T and multiple lags. Pct effect converts SumDL to % for a +10 CPI-point change using the SD of the idiosyncratic CPI in original units.}")
+#   ) %>%
+#   cat(file = "tables/rq2_dl.tex")
+
+# Include in TeX:
+# \input{tables/rq2_dl.tex}
+
+```
+
+
+```{r rq2 almon}
+library(dplyr)
+
+# Build Almon S0,S1,S2 over K lags using dplyr::lag by country
+build_almon_dplyr <- function(df, var, K, id = "country", time = "year"){
+  stopifnot(all(c(id, time, var) %in% names(df)))
+  df <- df %>% arrange(.data[[id]], .data[[time]])
+  # create lag columns
+  for(k in 0:K){
+    newnm <- paste0(var, "_L", k)
+    if(k == 0){
+      df[[newnm]] <- df[[var]]
+    } else {
+      df <- df %>%
+        group_by(.data[[id]]) %>%
+        mutate(!!newnm := dplyr::lag(.data[[var]], k)) %>%
+        ungroup()
+    }
+  }
+  # S0, S1, S2
+  lag_names <- paste0(var, "_L", 0:K)
+  df$S0_cpi <- rowSums(df[lag_names], na.rm = FALSE)
+  df$S1_cpi <- Reduce(`+`, Map(function(k, nm) k   * df[[nm]], 0:K, lag_names))
+  df$S2_cpi <- Reduce(`+`, Map(function(k, nm) k^2 * df[[nm]], 0:K, lag_names))
+  df
+}
+
+K <- 4
+dfA <- build_almon_dplyr(analysis_sample, "cpi10_id_sd", K)
+#----- Fitting the Almon models with DK SEs -----
+
+mA_base  <- feols(log_co2_pc    ~ S0_cpi + S1_cpi + S2_cpi + lgdppc_c + ind_c + ren_c | country + year,
+                  data = dfA, vcov = "DK", panel.id = ~ country + year)
+mA_trend <- feols(log_co2_pc    ~ S0_cpi + S1_cpi + S2_cpi + lgdppc_c + ind_c + ren_c + I(year - min(year)):country | country + year,
+                  data = dfA, vcov = "DK", panel.id = ~ country + year)
+mA_total <- feols(log_co2 ~ S0_cpi + S1_cpi + S2_cpi + lgdppc_c + ind_c + ren_c + log_pop | country + year,
+                  data = dfA, vcov = "DK", panel.id = ~ country + year)
+mA_noren <- feols(log_co2_pc    ~ S0_cpi + S1_cpi + S2_cpi + lgdppc_c + ind_c | country + year,
+                  data = dfA, vcov = "DK", panel.id = ~ country + year)
+
+etable(mA_base, mA_trend, mA_total, mA_noren,
+       title      = "RQ2 — Dynamic Effects of Carbon Pricing on $\\log(\\text{CO}_2)$ Emissions: TWFE Almon (2) Estimates",
+       label      = "tab:rq2_almon_twfe",
+       notes = "All models include country and year fixed effects. The dependent variable is $\\log(\\text{CO}_2\\text{ per capita})$, except in the 'Total emissions' column where it is $\\log(\\text{CO}_2)$ (population added as a control). CPI is residualized on year FE and standardized within country (idiosyncratic CPI). Standard errors are Driscoll--Kraay (bandwidth $L{=}2$)."
+     , tex= TRUE #uncomment to export as LaTeX
+)
+```
+
+
+
+
+
+```{r}
+library(ggplot2)
+
+# --- manually enter your estimated lag coefficients from RQ2 (DL 0–2) ---
+dl_coefs <- data.frame(
+  k = 0:2,
+  delta = c(0.0097, -0.0177, -0.0043)
+)
+
+# --- your Almon(2) coefficients (example: replace with actual estimates) ---
+a0 <- -0.0021
+a1 <- -0.0055
+a2 <- 0.0008
+
+# compute implied lag weights for 0–4 lags
+lags <- 0:4
+almon <- data.frame(
+  k = lags,
+  delta = a0 + a1*lags + a2*lags^2
+)
+
+# combine for plotting
+dl_coefs$Model <- "Distributed-lag (DL 0–2)"
+almon$Model   <- "Almon polynomial (0–4, degree 2)"
+df_plot <- rbind(dl_coefs, almon)
+
+# --- plot ---
+ggplot(df_plot, aes(x = k, y = delta, color = Model, shape = Model)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_color_manual(values = c("#0072B2", "#D55E00")) +
+  scale_shape_manual(values = c(16, 17)) +
+  labs(
+    x = "Lag (years)",
+    y = expression(paste("Estimated effect ", delta[k])),
+    color = NULL, shape = NULL,
+    title = "Comparison of Distributed-Lag and Almon(2) Lag Profiles"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+
+ggsave("figures/rq2_almon_schematic.pdf", width = 7, height = 4)
+
+```
+
+############## strategy
 
 ```{r}
 # Residualize each regressor on FE
