@@ -2219,7 +2219,7 @@ fit_dl <- function(dv, rhs, data) {
 # ---- Four specifications (match your RQ1) ---------------------------------
 m2_base  <- fit_dl("log_co2_pc",    "lgdppc_c + ind_c + ren_c",               analysis_sample)
 m2_trend <- fit_dl("log_co2_pc",    "lgdppc_c + ind_c + ren_c + cyear:country", analysis_sample)
-#m2_total <- fit_dl("log_co2_total", "lgdppc_c + ind_c + ren_c + log_pop",     analysis_sample)
+m2_total <- fit_dl("log_co2", "lgdppc_c + ind_c + ren_c + log_pop",     analysis_sample)
 m2_noren <- fit_dl("log_co2_pc",    "lgdppc_c + ind_c",                        analysis_sample)
 
 
@@ -2418,15 +2418,17 @@ modsD <- list(
   "No renewables"    = m3d_noren
 )
 
+# Dynamic effects with heterogeneity etable
 etable(modsD,
        #keep = c("cpi10_id_sd", "l(cpi10_id_sd,1)", "l(cpi10_id_sd,2)",
        #         "cpi10_id_sd:HighCarbon", "l(cpi10_id_sd,1):HighCarbon", "l(cpi10_id_sd,2):HighCarbon"),
        title      = "RQ3 — Dynamic Effects of Carbon Pricing on $\\log(\\text{CO}_2)$ Emissions with Heterogeneity by Initial Emissions Intensity: TWFE Distributed Lag (0--2) Estimates",
        label      = "tab:rq3_dl_twfe",
        notes = "All models include country and year fixed effects. The dependent variable is $\\log(\\text{CO}_2\\text{ per capita})$, except in the 'Total emissions' column where it is $\\log(\\text{CO}_2)$ (population added as a control). CPI is residualized on year FE and standardized within country (idiosyncratic CPI). HighCarbon is a dummy for countries with above-median emissions intensity of GDP in the pre-treatment period (2004--2006). Standard errors are Driscoll--Kraay (bandwidth $L{=}2$)."
-     #, tex= TRUE #uncomment to export as LaTeX
+   # , tex= TRUE #uncomment to export as LaTeX
 )
-# helper to build names present in your model output
+
+# helper to build names present model output
 nm_low  <- c("cpi10_id_sd","l(cpi10_id_sd, 1)","l(cpi10_id_sd, 2)")
 nm_int  <- paste0(nm_low, ":HighCarbon")
 
@@ -2504,6 +2506,339 @@ kbl(resD_print[,c(
 ```
 
 
+
+## RQ4: High vs low GDP per capita
+
+
+```{r rq4: continuous interaction DL(0-2) }
+# --- Ensure trend index exists
+analysis_sample$cyear <- with(analysis_sample, as.integer(year - min(year, na.rm = TRUE)))
+
+# --- Model builder (your original idea is good)
+fit_rq4_dl_cont <- function(dv, rhs){
+  feols(
+    as.formula(paste0(
+      dv, " ~ ",
+      # CPI lags + continuous interaction with centered log GDP pc
+      "cpi10_id_sd + l(cpi10_id_sd,1) + l(cpi10_id_sd,2) + ",
+      "(cpi10_id_sd + l(cpi10_id_sd,1) + l(cpi10_id_sd,2)) : lgdppc_c + ",
+      rhs, " | country + year"
+    )),
+    data     = analysis_sample,
+    vcov     = "DK",
+    panel.id = ~ country + year
+  )
+}
+
+# --- Choose correct DV names
+dv_total <- if ("log_co2_total" %in% names(analysis_sample)) "log_co2_total" else "log_co2"
+
+m4c_base  <- fit_rq4_dl_cont("log_co2_pc", paste0("lgdppc_c + ind_c + ren_c"))
+m4c_trend <- fit_rq4_dl_cont("log_co2_pc", paste0("lgdppc_c + ind_c + ren_c + cyear:country"))
+m4c_total <- fit_rq4_dl_cont(dv_total,    paste0("lgdppc_c + ind_c + ren_c + log_pop"))
+m4c_noren <- fit_rq4_dl_cont("log_co2_pc", paste0("lgdppc_c + ind_c"))  # note: no ren_c
+
+mods4_cont <- list(
+  "Baseline"         = m4c_base,
+  "+ Country trends" = m4c_trend,
+  "Total emissions"  = m4c_total,
+  "No renewables"    = m4c_noren
+)
+
+# --- Names to extract (robust to missing)
+nm_beta <- c("cpi10_id_sd","l(cpi10_id_sd, 1)","l(cpi10_id_sd, 2)")
+nm_int  <- paste0(nm_beta, ":lgdppc_c")
+
+# --- Income levels (lgdppc_c is centered)
+gdp_sd <- stats::sd(analysis_sample$lgdppc_c, na.rm = TRUE)
+g_levels <- c("Low (-1 SD)" = -gdp_sd, "Mean (0)" = 0, "High (+1 SD)" = gdp_sd)
+
+# --- % conversion helper (per +10 CPI points)
+sd_id  <- stats::sd(analysis_sample$cpi10_id, na.rm = TRUE)
+k_pts  <- 10
+pctify <- function(b){ 100 * b * (k_pts / sd_id) }
+
+# --- Summarizer (safe to missing names)
+summarize_dynamic_cont <- function(lbl, m, g_name, g_val){
+  cf <- coef(m); cn <- names(cf)
+
+  take <- function(names_vec){
+    keep <- intersect(names_vec, cn)
+    # fill missing with zeros so the sum works even if a term is dropped
+    out <- setNames(numeric(length(names_vec)), names_vec)
+    out[keep] <- cf[keep]
+    out
+  }
+  bL <- take(nm_beta)   # δ_0..2
+  bT <- take(nm_int)    # θ_0..2
+
+  # clustered VCOV
+  Vc <- sandwich::vcovCL(m, cluster = model.frame(m)[["country"]])
+  all_nm <- c(nm_beta, nm_int)
+  keepV  <- intersect(all_nm, rownames(Vc))
+  V      <- matrix(0, nrow = length(all_nm), ncol = length(all_nm),
+                   dimnames = list(all_nm, all_nm))
+  V[keepV, keepV] <- Vc[keepV, keepV]
+
+  # cumulative at income level g
+  S_g   <- sum(bL) + g_val * sum(bT)
+  g_vec <- c(rep(1,3), rep(g_val,3))
+  se_g  <- sqrt(drop(t(g_vec) %*% V %*% g_vec))
+  Wald  <- (S_g / se_g)^2
+  p_g   <- 1 - pchisq(Wald, 1)
+
+  data.frame(
+    Specification = lbl,
+    IncomeLevel   = g_name,
+    Sum           = S_g,
+    SE            = se_g,
+    Wald          = Wald,
+    p_val         = p_g,
+    Pct10         = pctify(S_g),
+    N             = as.integer(fixest::fitstat(m,"n")),
+    Within_R2     = as.numeric(fixest::fitstat(m,"wr2")),
+    check.names   = FALSE
+  )
+}
+
+# --- Run summary for all specs × income levels
+res4_cont <- do.call(
+  rbind,
+  unlist(
+    Map(function(lbl, m){
+      lapply(names(g_levels), function(gn){
+        summarize_dynamic_cont(lbl, m, gn, g_levels[[gn]])
+      })
+    }, names(mods4_cont), mods4_cont),
+    recursive = FALSE
+  )
+)
+
+# --- Pretty table (HTML; include Specification column)
+library(kableExtra)
+res4_cont_print <- res4_cont %>%
+  dplyr::mutate(
+    Sum    = sprintf("%.4f", Sum),
+    SE     = sprintf("(%.4f)", SE),
+    Wald   = sprintf("%.3f", Wald),
+    p_val  = sprintf("%.3f", p_val),
+    Pct10  = sprintf("%.2f", Pct10),
+    Within_R2 = sprintf("%.3f", Within_R2)
+  )
+
+kbl(
+  res4_cont_print[,c("Specification","IncomeLevel","Sum","SE","Wald","p_val","N","Within_R2","Pct10")],
+  format  = "html", booktabs = TRUE,
+  caption = "RQ4 — Dynamic TWFE (DL 0–2) with continuous heterogeneity: cumulative CPI effects at Low/Mean/High income (clustered by country).",
+  label   = "tab:rq4_dynamic_cont",
+  align   = c("l","l","r","r","r","r","r","r","r"),
+  row.names = FALSE
+)
+# For LaTeX, switch format="latex" and optionally add header groups with add_header_above(...)
+
+```
+
+```{r}
+etable(
+  mods4_cont,
+  keep = c(
+    # CPI lags
+    "cpi10_id_sd$", "l\\(cpi10_id_sd, 1\\)$", "l\\(cpi10_id_sd, 2\\)$",
+    # interactions
+    "cpi10_id_sd:lgdppc_c$", "l\\(cpi10_id_sd, 1\\):lgdppc_c$", "l\\(cpi10_id_sd, 2\\):lgdppc_c$",
+    # (optional) main controls
+    "lgdppc_c$", "ind_c$", "ren_c$", "log_pop$"
+  ),
+  title = "RQ4 — Dynamic Effects of Carbon Pricing with Continuous Heterogeneity by Economic Development: TWFE Distributed-Lag (0--2) Estimates",
+  label = "tab:rq4_dl_twfe_cont",
+  notes = "All models include country and year fixed effects. Dependent variable is log(CO2 per capita), except in 'Total emissions' where it is log(CO2) and log(population) is added as a control. CPI is residualized on year FE and standardized within country (idiosyncratic CPI). Driscoll–Kraay standard errors (bandwidth L=2)."
+# , tex = TRUE  # uncomment to export LaTeX directly
+)
+
+```
+
+
+```{r}
+# names for CPI lags and interactions
+nm_beta <- c("cpi10_id_sd","l(cpi10_id_sd, 1)","l(cpi10_id_sd, 2)")
+nm_int  <- paste0(nm_beta, ":lgdppc_c")
+
+# representative income levels (centered log GDPpc)
+gdp_sd   <- stats::sd(analysis_sample$lgdppc_c, na.rm = TRUE)
+g_levels <- c("Low (-1 SD)" = -gdp_sd, "Mean (0)" = 0, "High (+1 SD)" = gdp_sd)
+
+# % effect for +10 CPI points (same convention you used for RQ3)
+sd_id  <- stats::sd(analysis_sample$cpi10_id, na.rm = TRUE)
+k_pts  <- 10
+pctify <- function(b) 100 * b * (k_pts / sd_id)
+
+summarize_dynamic_cont <- function(lbl, m, g_name, g_val){
+  # extract coefficients (handle absent names safely)
+  b <- fixest::coef(m)
+  bL <- b[nm_beta]; bT <- b[nm_int]
+  # ensure names exist
+  stopifnot(all(!is.na(bL)), all(!is.na(bT)))
+
+  # covariance under the model's used vcov (DK), then subset
+  Vfull <- fixest::vcov(m)
+  V     <- Vfull[c(nm_beta, nm_int), c(nm_beta, nm_int)]
+
+  # cumulative effect at income level g: sum_l (delta_l + theta_l * g)
+  S_g   <- sum(bL + g_val * bT)
+
+  # gradient wrt [bL(3), bT(3)]
+  g_vec <- c(rep(1,3), rep(g_val,3))
+  se_g  <- sqrt(drop(t(g_vec) %*% V %*% g_vec))
+
+  W_g   <- (S_g / se_g)^2
+  p_g   <- 1 - pchisq(W_g, df = 1)
+
+  data.frame(
+    Specification = lbl, IncomeLevel = g_name,
+    Sum = S_g, SE = se_g, Wald = W_g, p_val = p_g,
+    Pct10 = pctify(S_g),
+    N = as.integer(fixest::fitstat(m,"n")),
+    Within_R2 = as.numeric(fixest::fitstat(m,"wr2")),
+    check.names = FALSE
+  )
+}
+
+# build results for all specs x income levels
+res4_cont <- do.call(
+  rbind,
+  unlist(
+    Map(function(lbl, m){
+      lapply(names(g_levels), function(gn){
+        summarize_dynamic_cont(lbl, m, gn, g_levels[[gn]])
+      })
+    }, names(mods4_cont), mods4_cont),
+    recursive = FALSE
+  )
+)
+
+# wide, publication-ready table
+res4_wide <- res4_cont |>
+  dplyr::mutate(
+    Sum    = sprintf("%.4f", Sum),
+    SE     = sprintf("(%.4f)", SE),
+    Wald   = sprintf("%.3f", Wald),
+    p_val  = sprintf("%.3f", p_val),
+    Pct10  = sprintf("%.2f", Pct10),
+    Within_R2 = sprintf("%.3f", Within_R2)
+  ) |>
+  dplyr::select(Specification, IncomeLevel, Sum, SE, Wald, p_val, Pct10, N, Within_R2) |>
+  tidyr::pivot_wider(
+    id_cols = c(Specification, N, Within_R2),
+    names_from = IncomeLevel,
+    values_from = c(Sum, SE, Wald, p_val, Pct10),
+    names_sep = " "
+  )
+
+# print (HTML; switch to "latex" for TeX output)
+kbl(
+  res4_wide,
+  format = "latex", booktabs = TRUE,
+  caption = "RQ4 — Dynamic TWFE (DL 0–2) with CPI × log(GDPpc): cumulative effects and Wald tests at Low/Mean/High income (clustered by country).",
+  label   = "tab:rq4_dynamic_wald",
+  align   = c("l", rep("r", ncol(res4_wide)-1))
+) %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  add_header_above(c(
+    " " = 1,
+    "Low (−1 SD)"  = 5,
+    "Mean (0)"     = 5,
+    "High (+1 SD)" = 5,
+    "Fit"          = 2
+  ))
+
+```
+
+# Diff in Diff
+
+## Staggered diff in diff
+Staggered DiD for carbon taxes (Sun–Abraham with fixest)
+
+```{r}
+
+# 1) Build treatment timing (cohort) and event time
+panel <- analysis_sample %>%
+  group_by(country) %>%
+  mutate(treat_year = unique(tax_start_year[!is.na(tax_start_year)])[1],
+         ever_treated = !is.na(treat_year),
+         # sunab constructs relative time around the treatment year
+         ) %>% ungroup()
+
+# 2) Event-study with sunab (untreated serve as controls; staggered cohorts)
+m_tax_es <- feols(
+  log_co2_pc ~ sunab(treat_year, year) + lgdppc_c + ind_c + ren_c | country + year,
+  data = panel %>% filter(year >= 2004, year <= 2023),
+  cluster = ~ country
+)
+
+# 3) Plot coefficients (pre-trends + dynamic effects)
+iplot(m_tax_es, ref.line = 0, xlab = "Event time (years)", ylab = "Effect on log CO2 pc")
+
+# 4) Average Treatment Effect on the Treated (ATT) by horizon
+summary(m_tax_es, agg = "att")                # overall
+summary(m_tax_es, agg = list("post" = 0:2))   # cumulative 0–2 years post
+
+```
+
+## MSR 2019
+
+```{r}
+panel <- analysis_sample %>%
+  mutate(post2019 = as.integer(year >= 2019))
+
+m_msr<- feols(
+  log_co2 ~ post2019* cpi10_id_sd + lgdppc_c + ind_c + ren_c | country + year,
+  data     = panel,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+etable(m_msr)
+# Event-study around 2019 with interacted sunab for continuous exposure (bin or standardize exposure)
+panel <- panel %>% mutate(ets_share_std = scale(cpi10_id_sd)[,1])
+m_msr_es <- feols(
+  log_co2 ~ sunab(2019, year):cpi10_id_sd+ lgdppc_c + ind_c + ren_c | country + year,
+  data = panel, cluster = ~ country +year
+)
+iplot(m_msr_es)
+
+```
+
+```{r}
+
+# Suppose analysis_sample has: country, year, tax_eur_tCO2 (national carbon tax level, 0 if no tax)
+
+# mark years where tax is "effectively on"
+threshold <- 0      # set to 10 for €10 threshold if desired
+persist_k <- 2      # must stay on for 2 consecutive years (including start year)
+
+tax_on <- analysis_sample %>%
+  arrange(country, year) %>%
+  mutate(tax_active = tax_eur_tCO2 > threshold) %>%
+  group_by(country) %>%
+  mutate(
+    # rolling window: does tax stay "on" for persist_k consecutive years starting at t?
+    stays_on_next = dplyr::lead(tax_active, 0:(persist_k-1)) %>% as.data.frame() %>%
+      apply(1, function(x) all(x %in% TRUE))
+  ) %>%
+  ungroup()
+
+tax_start <- tax_on %>%
+  group_by(country) %>%
+  summarize(
+    tax_start_year = suppressWarnings(min(year[stays_on_next], na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  mutate(tax_start_year = ifelse(is.infinite(tax_start_year), NA_integer_, tax_start_year))
+
+# merge back
+panel <- analysis_sample %>%
+  left_join(tax_start, by = "country")
+
+```
 
 
 # old 
