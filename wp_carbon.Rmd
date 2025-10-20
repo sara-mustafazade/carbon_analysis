@@ -299,6 +299,8 @@ analysis_sample <- analysis_sample %>%
     t       = year                                   # for trends
   )
 
+## Save the cleaned analysis sample (optional)
+ #write_csv(analysis_sample, "analysis_sample_eu.csv")
 ```
 
 # Analysis
@@ -1837,7 +1839,7 @@ ggsave("figs/cpi_lines_labeled_etslines.pdf", p_cpi_labeled_etslines)
 
 
 # Analysis
-## Collinearity diagnostics by Imai and Kim
+## Collinearity diagnostics
 
 ```{r data prep}
 # Prepare CPI variable: remove common year shocks (FE) & standardize within-country
@@ -2161,6 +2163,8 @@ kappa(model.matrix(lm_x)) # condition number (large = more collinearity)
 
 
 ```
+
+
 ```{r}
 # --- cumulative effect (δ0+δ1+δ2) with CLUSTERED-by-country VCOV ----
 library(sandwich)
@@ -2191,6 +2195,7 @@ pct_ci    <- 100 * ci_sum * (k / sd_id)
 c(pct_point = pct_point, ci_lo = pct_ci[1], ci_hi = pct_ci[2])
 
 ```
+
 ```{r}
 
 # Ensure time is numeric & a simple country trend variable exists
