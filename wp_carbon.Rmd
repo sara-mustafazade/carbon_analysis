@@ -2510,6 +2510,70 @@ kbl(resD_print[,c(
 
 ```
 
+### RQ3 static effects
+
+```{r rq3: static}
+# --- (1) Baseline  -------------------------------------------
+m_rq3_base <- feols(
+  log_co2_pc ~ cpi10_id_sd: HighCarbon + lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+
+# --- (2) + Country-specific linear trends --------------------------------
+m_rq3_trend <- feols(
+  log_co2_pc ~ cpi10_id_sd:HighCarbon + lgdppc_c + ind_c + ren_c + cyear:country | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+
+# --- (3) Total emissions as DV -------------------------------------------
+# If you don't have it yet, create log total emissions:
+m_rq3_total <- feols(
+  log_co2 ~ cpi10_id_sd:HighCarbon + lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+
+# --- (4) No renewables control -------------------------------------------
+m_rq3_noren <- feols(
+  log_co2_pc ~ cpi10_id_sd: HighCarbon + lgdppc_c + ind_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+
+# =============
+# Wald tests 
+# =============
+
+# H0: CPI effect = 0 (each spec)
+wald_1df <- function(m, name, vc = vcov(m)){
+  b <- coef(m)[name]; V <- vc[name, name]
+  W <- (b^2)/V
+  p <- 1 - pchisq(W, df = 1)
+  c(stat = W, p.value = p)
+}
+
+# ====================
+# Etable
+
+etable(m_rq3_base, m_rq3_trend, m_rq3_total, m_rq3_noren,
+         dict = c(
+    cpi10_id_sd = "CPI (idiosyncratic, 1 SD)",
+    lgdppc_c    = "log GDP pc (centered)",
+    ind_c       = "Industry share",
+    ren_c       = "Renewables share",
+    `cyear:country` = "Country trends"
+  ),
+       title      = "RQ3 — Effect of Carbon Pricing on $\\log(\\text{CO}_2)$ Emissions with Heterogeneity by Initial Emissions Intensity: TWFE Static Estimates",
+       label      = "tab:rq3_twfe",
+       notes = "All models include country and year fixed effects. The dependent variable is $\\log(\\text{CO}_2\\text{ per capita})$, except in the 'Total emissions' column where it is $\\log(\\text{CO}_2)$ (population added as a control). CPI is residualized on year FE and standardized within country (idiosyncratic CPI). HighCarbon is a dummy for countries with above-median emissions intensity of GDP in the pre-treatment period (2004--2006). Standard errors are Driscoll--Kraay (bandwidth $L{=}2$)."
+     , tex= TRUE  )
+```
 
 
 ## RQ4: High vs low GDP per capita
@@ -2742,7 +2806,7 @@ res4_wide <- res4_cont |>
 # print (HTML; switch to "latex" for TeX output)
 kbl(
   res4_wide,
-  format = "latex", booktabs = TRUE,
+  format = "html", booktabs = TRUE,
   caption = "RQ4 — Dynamic TWFE (DL 0–2) with CPI × log(GDPpc): cumulative effects and Wald tests at Low/Mean/High income (clustered by country).",
   label   = "tab:rq4_dynamic_wald",
   align   = c("l", rep("r", ncol(res4_wide)-1))
@@ -2756,6 +2820,59 @@ kbl(
     "Fit"          = 2
   ))
 
+```
+
+
+```{r}
+# --- (1) Baseline  -------------------------------------------
+m_rq4_base <- feols(
+  log_co2_pc ~ cpi10_id_sd: lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+
+# --- (2) + Country-specific linear trends --------------------------------
+m_rq4_trend <- feols(
+  log_co2_pc ~ cpi10_id_sd: lgdppc_c + ind_c + ren_c + cyear:country | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+
+# --- (3) Total emissions as DV -------------------------------------------
+# If you don't have it yet, create log total emissions:
+m_rq4_total <- feols(
+  log_co2 ~ cpi10_id_sd: lgdppc_c + ind_c + ren_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+
+# --- (4) No renewables control -------------------------------------------
+m_rq4_noren <- feols(
+  log_co2_pc ~ cpi10_id_sd: lgdppc_c + ind_c | country + year,
+  data     = analysis_sample,
+  vcov     = "DK",
+  panel.id = ~ country + year
+)
+
+# ====================
+# Etable
+
+etable(m_rq4_base, m_rq4_trend, m_rq4_total, m_rq4_noren,
+         dict = c(
+    cpi10_id_sd = "CPI (idiosyncratic, 1 SD)",
+    lgdppc_c    = "log GDP pc (centered)",
+    ind_c       = "Industry share",
+    ren_c       = "Renewables share",
+    `cyear:country` = "Country trends"
+  ),
+       title      = "RQ4 — Effect of Carbon Pricing on $\\log(\\text{CO}_2)$ Emissions with Heterogeneity by Initial Emissions Intensity: TWFE Static Estimates",
+       label      = "tab:rq4_twfe",
+       notes = "All models include country and year fixed effects. The dependent variable is $\\log(\\text{CO}_2\\text{ per capita})$, except in the 'Total emissions' column where it is $\\log(\\text{CO}_2)$ (population added as a control). CPI is residualized on year FE and standardized within country (idiosyncratic CPI). HighCarbon is a dummy for countries with above-median emissions intensity of GDP in the pre-treatment period (2004--2006). Standard errors are Driscoll--Kraay (bandwidth $L{=}2$)."
+     , tex= TRUE  )
+```
 ```
 
 # Diff in Diff
